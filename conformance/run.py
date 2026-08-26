@@ -233,12 +233,25 @@ def parse_frontmatter(text: str) -> dict:
                 map_indent = seq_indent + 2
                 pos += 1
                 while pos < len(lines) and _indent(lines[pos]) >= map_indent and not lines[pos].strip().startswith("- "):
+                    key_indent = _indent(lines[pos])
                     sub = lines[pos].strip()
                     if ":" not in sub:
                         raise FrontmatterError(f"expected 'key: value' in sequence mapping, got {lines[pos]!r}")
                     k, _, v = sub.partition(":")
-                    entry[k.strip()] = _scalar(v.strip()) if v.strip() else None
+                    v = v.strip()
                     pos += 1
+                    if v in (">", "|", ">-", "|-"):
+                        # A folded/literal block scalar INSIDE a sequence mapping
+                        # (e.g. `requires: - name: .. / purpose: > / install: ..`).
+                        # Consume the deeper-indented continuation lines as the
+                        # value, mirroring the top-level `parse_folded`. Without
+                        # this the parser wrongly reported a perfectly valid
+                        # manifest (any `requires` entry whose `purpose:` is a
+                        # folded scalar) as unparseable -- a false negative that
+                        # condemned a correct tool.
+                        entry[k.strip()] = parse_folded(key_indent)
+                    else:
+                        entry[k.strip()] = _scalar(v) if v else None
                 items.append(entry)
             else:
                 items.append(_scalar(item_body))
