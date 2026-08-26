@@ -1,0 +1,78 @@
+[project]
+name = "tmux-fleet"
+version = "0.1.0"
+description = "A smart tool for tmux fleets: observe every session on a machine, and — only under explicit per-invocation confirmation — type into one or start one. Deterministic paths run with nothing configured; smart paths (triage, interpret) bring model-backed judgment via amplifier-agent."
+readme = "README.md"
+# amplifier-agent-py (an unpinned dependency below) is validated on 3.13 and
+# the engine it drives requires >=3.12; the floor is set to 3.13 to match the
+# validated runtime, the same choice drumbeat made.
+requires-python = ">=3.13"
+license = { text = "MIT" }
+dependencies = [
+    # tmux-kit is the PLUMBING (sockets, spawning, capture, input, the
+    # isolated-server test harness). A DEPENDENCY, never vendored. Pinned to a
+    # RELEASED floor from PyPI (>=0.4), NOT a git commit -- application judgment
+    # (harness classification, triage, interpretation) lives here; mechanism
+    # improvements flow upstream as PRs. Harness classification was re-homed
+    # into this library (tmux_kit.labels was deleted upstream in 0.3.4 as app
+    # policy) -- see tmux_fleet/harness.py.
+    "tmux-kit>=0.4",
+    # amplifier-agent-py is the maintained SDK the smart verbs drive every turn
+    # through (mirrors drumbeat's declaration). It is NOT on PyPI, so the git
+    # URL is the mechanism, and it is deliberately UNPINNED (floating main). It
+    # is a pure-Python package with no provider SDKs and no credentials of its
+    # own; it discovers and spawns the `amplifier-agent` engine binary. Its
+    # mere presence configures no provider, so the tool still LOADS and runs its
+    # deterministic paths with no provider configured (spec: straight paths must
+    # not require a provider at import time).
+    "amplifier-agent-py @ git+https://github.com/microsoft/amplifier-agent#subdirectory=wrappers/python-py",
+    # The engine BINARY (`amplifier-agent`) is deliberately NOT a dependency of
+    # this tool. VISION section 3: amplifier-agent is a SHARED MACHINE SERVICE --
+    # "Configure amplifier-agent once; every smart tool on the machine shares
+    # it." Co-installing a private engine copy (as drumbeat does, because it OWNS
+    # its engine version) produced a broken sibling here: a `uv tool install` of
+    # the engine pulls amplifier-core but NOT the provider SDKs the provider
+    # modules dynamically import (`No module named 'anthropic'`), so that private
+    # copy failed every turn while the machine's configured engine sat unused on
+    # PATH. So the smart verbs resolve the engine on PATH (or via
+    # $TMUX_FLEET_AGENT_BIN) at runtime and fail loudly with a named remedy when
+    # it is absent -- see tmux_fleet/agent.py. The maintained SDK above is what
+    # this tool links against and drives, mirroring drumbeat's spawn_agent_sync
+    # usage; the engine itself is shared machine infrastructure, not vendored.
+    # SMART_TOOL.md frontmatter is YAML; the manifest accessor parses the copy
+    # built into the tool. A tiny, ubiquitous, pure-Python dependency.
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+tmux-fleet = "tmux_fleet.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# amplifier-agent / amplifier-agent-py are declared as direct git references
+# (neither is on PyPI). hatchling rejects direct references in
+# project.dependencies unless this is set.
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tmux_fleet"]
+# The manifest is shipped INSIDE the package as `_smart_tool.md` (a copy of the
+# root SMART_TOOL.md, asserted byte-identical by tests) so the library accessor
+# can read it "from the copy built into the tool" in any install layout. The
+# root SMART_TOOL.md remains the single spec-required manifest at the
+# distribution root; there is still exactly one file named SMART_TOOL.md.
+artifacts = ["src/tmux_fleet/_smart_tool.md"]
+
+[tool.pytest.ini_options]
+# amplifier-agent pulls in amplifier-core, whose pytest plugin
+# ("amplifier_module") auto-registers via a pytest11 entry point and imports
+# pytest_asyncio at load time -- which this suite neither ships nor needs.
+# Disable that plugin so the suite runs on nothing but pytest itself.
+addopts = "-p no:amplifier_module"
+testpaths = ["tests"]
