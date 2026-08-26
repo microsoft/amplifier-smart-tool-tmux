@@ -1,0 +1,114 @@
+amplifier-agent binary: /home/bkrabach/.local/bin/amplifier-agent
+provider *_API_KEY vars present (names only): ['ANTHROPIC_API_KEY', 'ANTHROPIC_CORRECT_INSTANCE_API_KEY', 'ANTHROPIC_FABLE_API_KEY', 'ANTHROPIC_PROVIDER_ANTHROPIC_API_KEY', 'ANTHROPIC_WRONG_INSTANCE_API_KEY', 'AZURE_SPEECH__API_KEY', 'BING_SEARCH_API_KEY', 'BRAVE_API_KEY', 'GIPHY_API_KEY', 'GOOGLE_API_KEY', 'MCP_BRAVE_SEARCH_API_KEY', 'OPENAI_API_KEY', 'OPENAI_LUNA_API_KEY', 'OPENAI_LUNA_MAX_API_KEY', 'OPENAI_SOL_API_KEY', 'OPENAI_TERRA_API_KEY', 'OSS_API_KEY', 'QWEN_API_KEY', 'RUNPOD_API_KEY', 'SERPAPI_API_KEY', 'VLLM_API_KEY', 'XAI_API_KEY']
+
+=== deterministic sessions (context the model is handed) ===
+  builder  at_prompt=no        harness=unknown  last_line='building'
+  idle     at_prompt=yes       harness=unknown  last_line='ux$'
+  review   at_prompt=yes       harness=unknown  last_line='>>>'
+
+=== REAL triage (executes through amplifier-agent) ===
+{
+  "verb": "triage",
+  "model_backed": true,
+  "executed_through": "amplifier-agent",
+  "socket": {
+    "socket_dir": "/tmp/tf-proof-dir-1cf34gcl",
+    "socket_name": "tf-proof-92da45eb8f97",
+    "server_socket_path": "/tmp/tf-proof-dir-1cf34gcl/tmux-1000/tf-proof-92da45eb8f97",
+    "resolved_from": "explicit --socket-dir argument",
+    "resolved_detail": "passed explicitly on this invocation as '/tmp/tf-proof-dir-1cf34gcl'",
+    "resolution_order": [
+      "explicit --socket-dir argument",
+      "config file key 'socket_dir'",
+      "TMUX_KIT_SOCKET_DIR environment variable",
+      "system default (no configuration found)"
+    ],
+    "config_path": "/home/bkrabach/.config/tmux-fleet/config.json",
+    "config_path_exists": false,
+    "tmux_reported_socket_path": "/tmp/tf-proof-dir-1cf34gcl/tmux-1000/tf-proof-92da45eb8f97",
+    "socket_path_confirmed_by_tmux": true,
+    "ambient_tmux_tmpdir": "/home/bkrabach/.tmux",
+    "ambient_tmux": "/home/bkrabach/.tmux/tmux-1000/default,2047765,76",
+    "ambient_ignored": true,
+    "how_to_change": "set TMUX_KIT_SOCKET_DIR=<dir>, or write {\"socket_dir\": \"<dir>\"} to /home/bkrabach/.config/tmux-fleet/config.json, or pass --socket-dir <dir>. <dir> is the TMUX_TMPDIR-style PARENT directory; the server socket is <dir>/tmux-1000/tf-proof-92da45eb8f97.",
+    "ambient_ignored_note": "this process's environment carries TMUX_TMPDIR='/home/bkrabach/.tmux' and TMUX='/home/bkrabach/.tmux/tmux-1000/default,2047765,76', and this tool deliberately did NOT use it: the socket was resolved from explicit --socket-dir argument to /tmp/tf-proof-dir-1cf34gcl. Ambient auto-detection is how a tool works on one box and silently reads the wrong fleet on the next. If the ambient value is the fleet you meant, adopt it explicitly -- see how_to_change.",
+    "ambient_tmux_note": "$TMUX is set, meaning this process is running inside an attached tmux client. tmux gives $TMUX priority OVER TMUX_TMPDIR, so it is removed from the environment handed to every tmux subprocess (tmux_kit.proc.tmux_env does this) -- otherwise the surrounding pane's server would silently outrank the resolved socket directory. Every tmux call is also pinned with an explicit -S."
+  },
+  "server_running": true,
+  "triage": {
+    "summary": "All 3 sessions are fresh (idle_seconds=2, well under the 900s quiet threshold) with no signs of a stall; one session is mid-build and unclassified, the other two sit at normal prompts.",
+    "needs_attention": [
+      {
+        "session": "builder",
+        "why": "at_prompt=\"no\" with last_line \"building\" that doesn't match any known prompt pattern -- it appears to be actively running a build, but since its state can't be positively classified as a prompt, a human should confirm it isn't actually a stalled or keypress-blocked process rather than genuinely mid-task.",
+        "urgency": "low",
+        "suggested_action": "Glance at the pane to confirm the build is progressing (new output) rather than hung waiting for input."
+      }
+    ],
+    "quiet": [
+      "idle",
+      "review"
+    ],
+    "notes": "idle_seconds is 2 for every session, meaning this snapshot was taken right after activity in all three -- it doesn't tell us how long builder has actually been in its current state, so the low-urgency flag on builder is precautionary. 'review' is sitting at a Python REPL (>>>) which is a legitimate idle prompt, not a stuck TUI, so it's listed as quiet."
+  },
+  "context_assembled_by": "tmux-fleet library code (list_sessions slivers + the attention heuristic order) -- the agent judged this context but did not choose or collect it",
+  "fleet_counts": {
+    "session_count": 3,
+    "at_prompt_yes": 2,
+    "at_prompt_no": 1,
+    "at_prompt_uncertain": 0
+  },
+  "note": "the triage verdict is a model's judgment over mechanically-collected slivers, NOT a readback of any session. Use `read`/`interpret` on a flagged session before acting on it."
+}
+
+=== REAL interpret('review') ===
+{
+  "verb": "interpret",
+  "model_backed": true,
+  "executed_through": "amplifier-agent",
+  "socket": {
+    "socket_dir": "/tmp/tf-proof-dir-1cf34gcl",
+    "socket_name": "tf-proof-92da45eb8f97",
+    "server_socket_path": "/tmp/tf-proof-dir-1cf34gcl/tmux-1000/tf-proof-92da45eb8f97",
+    "resolved_from": "explicit --socket-dir argument",
+    "resolved_detail": "passed explicitly on this invocation as '/tmp/tf-proof-dir-1cf34gcl'",
+    "resolution_order": [
+      "explicit --socket-dir argument",
+      "config file key 'socket_dir'",
+      "TMUX_KIT_SOCKET_DIR environment variable",
+      "system default (no configuration found)"
+    ],
+    "config_path": "/home/bkrabach/.config/tmux-fleet/config.json",
+    "config_path_exists": false,
+    "tmux_reported_socket_path": "/tmp/tf-proof-dir-1cf34gcl/tmux-1000/tf-proof-92da45eb8f97",
+    "socket_path_confirmed_by_tmux": true,
+    "ambient_tmux_tmpdir": "/home/bkrabach/.tmux",
+    "ambient_tmux": "/home/bkrabach/.tmux/tmux-1000/default,2047765,76",
+    "ambient_ignored": true,
+    "how_to_change": "set TMUX_KIT_SOCKET_DIR=<dir>, or write {\"socket_dir\": \"<dir>\"} to /home/bkrabach/.config/tmux-fleet/config.json, or pass --socket-dir <dir>. <dir> is the TMUX_TMPDIR-style PARENT directory; the server socket is <dir>/tmux-1000/tf-proof-92da45eb8f97.",
+    "ambient_ignored_note": "this process's environment carries TMUX_TMPDIR='/home/bkrabach/.tmux' and TMUX='/home/bkrabach/.tmux/tmux-1000/default,2047765,76', and this tool deliberately did NOT use it: the socket was resolved from explicit --socket-dir argument to /tmp/tf-proof-dir-1cf34gcl. Ambient auto-detection is how a tool works on one box and silently reads the wrong fleet on the next. If the ambient value is the fleet you meant, adopt it explicitly -- see how_to_change.",
+    "ambient_tmux_note": "$TMUX is set, meaning this process is running inside an attached tmux client. tmux gives $TMUX priority OVER TMUX_TMPDIR, so it is removed from the environment handed to every tmux subprocess (tmux_kit.proc.tmux_env does this) -- otherwise the surrounding pane's server would silently outrank the resolved socket directory. Every tmux call is also pinned with an explicit -S."
+  },
+  "session": "review",
+  "interpretation": {
+    "summary": "A Python 3.13 interactive REPL was launched from a project directory and is currently sitting idle at the '>>>' prompt with no commands entered yet.",
+    "state": "waiting_for_input",
+    "evidence": "Pane shows 'python3' invoked, Python version banner, and trailing '>>> ' prompt with blank lines after it and no further output or errors.",
+    "confidence": "high",
+    "suggested_next_action": "Enter a Python command at the '>>>' prompt, or exit the REPL (e.g., exit()/Ctrl-D) if it's no longer needed."
+  },
+  "context_assembled_by": "tmux-fleet library code (read scrollback) -- the agent interpreted this capture but did not choose or collect it",
+  "read_completeness": {
+    "history_lines_requested": 200,
+    "lines_returned": 24,
+    "complete": true,
+    "history_size": 0,
+    "pane_height": 24,
+    "session_history_limit": 50000,
+    "used_default_depth": true,
+    "max_read_lines": 2000,
+    "what_lines_means": "--lines N is tmux's `-S -N`: N lines of history BEFORE the visible screen. The visible screen always comes along, so lines_returned is about N + pane_height and must NOT be compared against N to judge completeness.",
+    "note": "read is COMPLETE: 200 requested >= history_size 0, so the whole retained scrollback for this session is in this response."
+  },
+  "note": "this is a model's interpretation of captured pane text, NOT a readback of the process's own state. Confidence is the model's; weigh it against the completeness block."
+}
