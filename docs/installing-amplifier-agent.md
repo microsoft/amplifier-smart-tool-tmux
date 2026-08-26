@@ -24,3 +24,8 @@ Once configured, every smart tool on the machine shares the same substrate.
 
 Verify with `amplifier-agent doctor`, then run `tmux-fleet --help` — the
 model-backed verbs are marked there — and try `tmux-fleet triage`.
+
+> **Provider SDK gotcha:** `uv tool install` pulls `amplifier-core` but **not**
+> provider SDKs — add your provider, e.g. `--with anthropic`, or the model-backed
+> verbs will fail with `No module named 'anthropic'`:
+> `uv tool install --with anthropic git+https://github.com/microsoft/amplifier-agent`
