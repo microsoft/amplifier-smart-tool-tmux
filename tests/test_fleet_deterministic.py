@@ -17,7 +17,16 @@ def no_providers(monkeypatch):
     yield
 
 
-def test_sessions_lists_the_fleet_and_confirms_socket():
+def test_sessions_lists_the_fleet_and_confirms_socket(monkeypatch):
+    # Simulate running from inside an attached tmux pane, so the "ambient $TMUX
+    # was ignored" assertion is HERMETIC. It must not depend on whether the test
+    # runner itself happens to be inside tmux -- in a clean CI/container/sandbox
+    # it is not, and TMUX is unset there, which would make ambient_ignored False
+    # and fail this assertion for an environment reason rather than a tool
+    # defect. Setting $TMUX here exercises exactly what the tool must do: resolve
+    # its own socket and report the ambient value as seen-and-ignored.
+    monkeypatch.setenv("TMUX", "/tmp/not-our-pane/default,1,0")
+
     async def scenario():
         async with make_fleet("alpha", "beta") as (_srv, kw):
             return await fleet.list_sessions(**kw)
@@ -30,7 +39,7 @@ def test_sessions_lists_the_fleet_and_confirms_socket():
     # the scope claim is confirmed by tmux itself
     assert result["socket"]["socket_path_confirmed_by_tmux"] is True
     assert result["_completeness"]["complete"] is True
-    # ambient TMUX/$TMUX (this test process is inside a pane) was ignored
+    # ambient $TMUX (set above) was seen and deliberately ignored
     assert result["socket"]["ambient_ignored"] is True
 
 
