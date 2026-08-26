@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments / build
+.venv/
+dist/
+build/
+
+# Lane infrastructure (not part of the deliverable)
+/GOAL.md
