@@ -8,7 +8,8 @@ under explicit per-invocation confirmation, types into one or starts one.
 Deterministic paths (`socket`, `sessions`, `attention`, `read`, `send`,
 `create`, `doctor`, `exit-code`) run with nothing configured. Smart paths
 (`triage`, `interpret`) bring model-backed judgment, executed through
-[amplifier-agent](https://github.com/microsoft/amplifier-agent).
+[amplifier-agent](https://github.com/microsoft/amplifier-agent)'s engine library
+**embedded in-process** — no subprocess, no PATH-resolved binary.
 
 This repo is the first reference implementation of the
 [amplifier smart-tools spec](https://github.com/microsoft/amplifier-smart-tools).
@@ -19,6 +20,20 @@ See `docs/VISION.md` and `contracts/cli.v1.md` for the governing design.
 ```
 uv tool install git+<this repo>
 ```
+
+The engine ships as a regular dependency — you get it automatically. To use the
+model-backed verbs you additionally install the extra for your provider's SDK
+and supply that provider's credentials from your environment (the tool stores
+none):
+
+```
+uv tool install "git+<this repo>" --with anthropic   # or: pip install "tmux-fleet[anthropic]"
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Extras available today: `anthropic`, `openai`. See
+[`docs/installing-amplifier-agent.md`](docs/installing-amplifier-agent.md) for
+provider configuration, the `TMUX_FLEET_PROVIDER` pin, and the refusal taxonomy.
 
 ## Use
 

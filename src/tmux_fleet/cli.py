@@ -191,11 +191,16 @@ def _full_help() -> str:
         lines.append("")
     lines += [
         "MODEL-BACKED VERBS",
-        f"  {', '.join(_MODEL_BACKED)} execute through amplifier-agent (the AI",
-        "  substrate). Invoked without a working amplifier-agent they FAIL saying",
-        "  exactly that and how to configure it -- never a silent fallback to a",
-        "  deterministic approximation. Every other verb runs with no AI substrate",
-        "  configured at all.",
+        f"  {', '.join(_MODEL_BACKED)} execute through the amplifier-agent engine",
+        "  library, imported IN-PROCESS (no subprocess, no PATH-resolved binary).",
+        "  The engine ships as a dependency; a provider SDK arrives via an install",
+        "  extra (e.g. `tmux-fleet[anthropic]`) and provider credentials arrive",
+        "  from your environment -- this tool stores none. Invoked without a usable",
+        "  substrate they FAIL naming exactly which precondition is missing (engine",
+        "  dependency, provider SDK extra, no provider configured, or no",
+        "  credentials in the environment) and how to fix it -- never a silent",
+        "  fallback to a deterministic approximation. Every other verb runs with no",
+        "  AI substrate configured at all.",
     ]
     return "\n".join(lines) + "\n"
 

@@ -62,7 +62,12 @@ def test_requires_shape_and_installs_are_doc_references():
     m = manifest_mod.manifest()
     by_name = {r.name: r for r in m.requires}
     assert "tmux" in by_name and by_name["tmux"].optional is False
-    assert "amplifier-agent" in by_name and by_name["amplifier-agent"].optional is True
+    # amplifier-agent is no longer an external prerequisite -- the engine ships
+    # as a regular dependency now (VISION section 3 amended). The remaining
+    # optional requirement is the AI provider (an SDK extra + credentials) the
+    # model-backed verbs need.
+    assert "amplifier-agent" not in by_name
+    assert "ai-provider" in by_name and by_name["ai-provider"].optional is True
     for r in m.requires:
         # install is a doc reference, never a command
         assert not any(tok in r.install for tok in ("&&", "|", ";"))
