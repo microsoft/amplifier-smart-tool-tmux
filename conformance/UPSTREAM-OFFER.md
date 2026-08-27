@@ -46,7 +46,7 @@ when no invocation recipe is discoverable).
 
 | # | Rule id | Spec source | Sentence operationalized |
 |---|---------|-------------|--------------------------|
-| M1 | `manifest-present` | `manifest.md` | "`SMART_TOOL.md` at the distribution root." |
+| M1 | `manifest-present` | `manifest.md` | "`SMART_TOOL.md`, in the tool's own source, beside the code that reads it." |
 | M2 | `manifest-frontmatter-parses` | `manifest.md` | "YAML frontmatter, then a Markdown body." |
 | M3 | `manifest-fields-closed` | `manifest.md` | "Fields not listed here are not part of the manifest." |
 | M4 | `manifest-required-fields` | `manifest.md` | The frontmatter fields (`smart_tool_format`, `name`, `version`, `description`, `use_cases`, `platforms`) each described as part of the manifest. |

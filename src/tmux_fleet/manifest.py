@@ -1,12 +1,10 @@
 """The SMART_TOOL.md manifest, reachable from the library as structured data.
 
-The spec (manifest.md) requires the manifest to be reachable through the
-library "read from the copy built into the tool", not by locating a filesystem
-path -- install layouts differ by ecosystem and no path is portable. So the
-accessor parses a copy shipped INSIDE the package (``_smart_tool.md``), and the
-root ``SMART_TOOL.md`` (what a registry or a human browsing the repo reads) is
-byte-identical to it (asserted by a test) -- "the same manifest reached two
-ways", so the file and the accessor can never diverge.
+The spec (manifest.md) puts the manifest in the tool's own source, beside the
+code that reads it, and requires callers to reach it through the library rather
+than by locating a filesystem path -- install layouts differ by ecosystem and no
+path is portable. There is one manifest and one copy of it, so the file a
+registry reads and the object this accessor returns cannot disagree.
 
 The closed field set is enforced here: ``smart_tool_format``, ``name``,
 ``version``, ``description``, ``use_cases``, ``platforms``, ``requires``.
@@ -18,12 +16,11 @@ from __future__ import annotations
 
 import importlib.resources
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import yaml
 
-_PACKAGED_COPY = "_smart_tool.md"
+_MANIFEST_NAME = "SMART_TOOL.md"
 
 _ALLOWED_FIELDS = {
     "smart_tool_format",
@@ -64,28 +61,14 @@ class Manifest:
 
 
 def _read_manifest_text() -> str:
-    """The raw SMART_TOOL.md text, from the copy built into the tool.
-
-    Prefers the packaged copy (works after installation, any layout); falls back
-    to the repo-root ``SMART_TOOL.md`` for a source checkout that has not been
-    built.
-    """
-    try:
-        resource = importlib.resources.files("tmux_fleet").joinpath(_PACKAGED_COPY)
-        if resource.is_file():
-            return resource.read_text(encoding="utf-8")
-    except (FileNotFoundError, ModuleNotFoundError, AttributeError):
-        pass
-
-    root = Path(__file__).resolve().parents[2] / "SMART_TOOL.md"
-    if root.is_file():
-        return root.read_text(encoding="utf-8")
-
-    raise ManifestError(
-        "SMART_TOOL.md is not reachable -- neither the packaged copy "
-        f"(tmux_fleet/{_PACKAGED_COPY}) nor the repo-root SMART_TOOL.md was "
-        "found. The manifest must ship with the tool."
-    )
+    """The raw SMART_TOOL.md text, from the copy built into the tool."""
+    resource = importlib.resources.files("tmux_fleet").joinpath(_MANIFEST_NAME)
+    if not resource.is_file():
+        raise ManifestError(
+            f"SMART_TOOL.md is not reachable at tmux_fleet/{_MANIFEST_NAME}. "
+            "The manifest must ship with the tool."
+        )
+    return resource.read_text(encoding="utf-8")
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:

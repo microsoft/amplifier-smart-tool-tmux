@@ -60,12 +60,6 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tmux_fleet"]
-# The manifest is shipped INSIDE the package as `_smart_tool.md` (a copy of the
-# root SMART_TOOL.md, asserted byte-identical by tests) so the library accessor
-# can read it "from the copy built into the tool" in any install layout. The
-# root SMART_TOOL.md remains the single spec-required manifest at the
-# distribution root; there is still exactly one file named SMART_TOOL.md.
-artifacts = ["src/tmux_fleet/_smart_tool.md"]
 
 [tool.pytest.ini_options]
 # amplifier-agent pulls in amplifier-core, whose pytest plugin
