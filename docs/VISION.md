@@ -15,7 +15,7 @@ deterministic paths run with nothing configured. Its smart paths bring judgment:
 triage across a whole fleet, interpretation of what a session's output means.
 
 This repo steers against the governing spec at
-[amplifier-smart-tools-spec](https://github.com/DavidKoleczek/amplifier-smart-tools-spec)
+[amplifier-smart-tools spec](https://github.com/microsoft/amplifier-smart-tools)
 and aims to be its first reference implementation. Where the spec is silent we
 choose and record; where our experience contradicts it, we feed evidence
 upstream rather than fork the shape.

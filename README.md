@@ -11,7 +11,7 @@ Deterministic paths (`socket`, `sessions`, `attention`, `read`, `send`,
 [amplifier-agent](https://github.com/microsoft/amplifier-agent).
 
 This repo is the first reference implementation of the
-[amplifier smart-tools spec](https://github.com/DavidKoleczek/amplifier-smart-tools-spec).
+[amplifier smart-tools spec](https://github.com/microsoft/amplifier-smart-tools).
 See `docs/VISION.md` and `contracts/cli.v1.md` for the governing design.
 
 ## Install
