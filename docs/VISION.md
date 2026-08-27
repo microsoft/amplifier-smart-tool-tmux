@@ -37,13 +37,20 @@ harness identification, fleet triage, "did it succeed" interpretation —
 application judgment, not tmux mechanism. Improvements to mechanism flow
 upstream as PRs.
 
-### 3. amplifier-agent is the AI substrate — contractually
+### 3. amplifier-agent is the AI substrate — embedded, contractually
 
-Model-backed capabilities execute through **amplifier-agent** (isolated
-subprocess turns via its maintained SDK). The tool never carries provider
-credentials, never links a provider SDK, never re-implements an agent loop.
-Configure amplifier-agent once; every smart tool on the machine shares it.
-Deterministic paths load and run with amplifier-agent entirely absent.
+Model-backed capabilities execute through **amplifier-agent's engine library**,
+imported in-process: the tool ships with its own AI capability built in, per
+the governing spec's own definition. The tool's process is per-invocation and
+single-turn — it is itself the isolation boundary, so no CLI subprocess and no
+wrapper SDK stand between a verb and the engine. The tool never carries
+provider credentials and never re-implements an agent loop; the engine is a
+regular dependency, a provider SDK arrives via an install extra (e.g.
+`tmux-fleet[anthropic]`), and provider keys arrive from the caller's
+environment at runtime. The engine is imported lazily by the smart verbs only:
+deterministic paths and `--help` never touch it and run with nothing
+configured. A smart verb without a usable substrate fails naming exactly which
+precondition is missing.
 
 ### 4. The smart path never lies about itself
 
@@ -69,7 +76,8 @@ fix it is a working feature; an empty result or bare stack trace is a defect.
 
 ## What this repo deliberately resists
 
-- **Provider credentials or SDKs in-tool** — that is amplifier-agent's job.
+- **Provider credentials in-tool** — keys arrive from the caller's environment
+  at runtime; they are never stored, bundled, or logged.
 - **Kill/rename/undo verbs** — this tool observes a fleet it did not create.
 - **Vendoring tmux-kit** — mechanism improvements go upstream.
 - **Prose answers from smart verbs** — structured output or it did not happen.
@@ -77,6 +85,15 @@ fix it is a working feature; an empty result or bare stack trace is a defect.
 
 ## Changelog
 
+- **2026-08-27** — §3 amended: the AI substrate moves from a shared
+  machine-service binary (driven via the subprocess SDK) to the engine library
+  embedded in the tool's own environment. Evidence: amplifier-agent v0.17.0
+  leads its integration story with the documented embedding surface; this
+  tool's process is already per-invocation and single-turn (the isolation
+  boundary); and the shared-service model produced two proven field failures —
+  binary-off-PATH resolution and the provider-SDK install gotcha — that
+  embedding deletes. Aligns with the spec's "ships with its own AI capability
+  built in." The provider-SDK resist item narrows to credentials only.
 - **2026-08-26** — Initial vision. Encodes the negotiated decisions: triage +
   interpret (+ harness classification) as the smart capabilities;
   amplifier-agent as the contractually required AI substrate; `tmux-fleet` as

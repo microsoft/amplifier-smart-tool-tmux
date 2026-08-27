@@ -1,4 +1,4 @@
-# tmux-fleet CLI Contract — v1 (DRAFT — no implementation passes yet; this is the seam consumers build against)
+# tmux-fleet CLI Contract — v1 (DRAFT — implementation passes and the freeze bar is met; deliberately held un-frozen by owner decision while the contract lattice matures)
 
 ## Who builds against this
 
@@ -25,9 +25,11 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
 
 3. **Model-backed verbs** — `triage` (fleet-wide: what needs attention and
    why, structured) and `interpret <session>` (what this session's state/output
-   means, structured). These execute through amplifier-agent; invoked without a
-   working amplifier-agent they fail saying exactly that and how to configure
-   it — **never** a silent fallback to a deterministic approximation.
+   means, structured). These execute through the embedded amplifier-agent
+   engine library; invoked without a usable substrate (provider SDK extra not
+   installed, no provider configured, or no credentials in the environment)
+   they fail naming exactly which precondition is missing and how to fix it —
+   **never** a silent fallback to a deterministic approximation.
 
 4. **Writes are fenced.** `send` and `create` refuse without an explicit
    per-invocation `--confirmed`. The refusal is loud and names the flag. There
@@ -73,6 +75,12 @@ it in a real drumbeat workspace · a worked example. DRAFT until all four.
 
 ## Changelog
 
+- **2026-08-27** — Rule 3 amended with VISION §3: model-backed verbs execute
+  through the embedded engine library rather than a PATH-resolved
+  amplifier-agent binary; the refusal taxonomy names the missing precondition
+  (extra / provider config / credentials). Refusal semantics otherwise
+  unchanged: loud, remedied, never a silent fallback. Status line refreshed to
+  the held-loosely posture (the old "no implementation passes yet" was stale).
 - **2026-08-26** — v1 drafted from the negotiated design (deterministic verb set
   ported from the proven fleet pack + `doctor`/`exit-code` gap-fills; smart
   verbs `triage`/`interpret` on amplifier-agent). No implementation exists yet;
