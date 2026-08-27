@@ -6,7 +6,8 @@ never vendored). What lives here is the judgment: tri-state prompt
 classification, completeness contracts on every list, an attention rollup that
 refuses to present a heuristic as a verdict, deny-by-default input, harness
 classification (re-homed from the deleted ``tmux_kit.labels``), and the
-model-backed ``triage``/``interpret`` verbs executed through amplifier-agent.
+model-backed ``triage``/``interpret`` verbs executed through amplifier-agent's
+engine library, embedded in-process.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from tmux_fleet.smart import interpret, triage
 try:
     __version__ = _pkg_version("tmux-fleet")
 except PackageNotFoundError:  # pragma: no cover - source checkout without metadata
-    __version__ = "0.1.0"
+    __version__ = "0.2.0"
 
 __all__ = [
     "__version__",

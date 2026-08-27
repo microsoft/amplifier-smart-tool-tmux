@@ -2,22 +2,26 @@
 
 Both hold the four properties VISION section 4 demands of a smart path:
 
-* **Never lies about itself.** With no working amplifier-agent they fail saying
-  exactly that (``AgentUnavailable``, checked up front) -- never a silent
-  fallback to a deterministic approximation.
+* **Never lies about itself.** With no usable substrate they fail saying exactly
+  which precondition is missing (``AgentUnavailable``, resolved up front via
+  ``agent.prepare_turn`` BEFORE any tmux work) -- never a silent fallback to a
+  deterministic approximation.
 * **Context is assembled mechanically by code.** The fleet state / scrollback a
   smart verb reasons over is collected by the deterministic verbs in this
   library (``attention``, ``read``), never by the agent's own judgment about
-  what to look at.
+  what to look at. The turn runs with tool approval declined, so the embedded
+  engine cannot go collect its own context.
 * **Results are structured.** The agent is instructed to return strict JSON; the
   parsed object is returned. Unparseable output is a failure, not a shrug.
 * **Partial is failure.** A turn that returns nothing usable raises rather than
   returning half an answer.
+
+The model turn runs through amplifier-agent's engine library, imported
+in-process by ``agent.prepare_turn`` -- no CLI subprocess, no wrapper SDK.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from typing import Any
@@ -64,18 +68,6 @@ def _extract_json(text: str) -> Any:
         "must be structured; refusing to pass prose off as a structured answer. "
         f"Raw model output (truncated): {text[:500]!r}"
     )
-
-
-def _require_agent() -> None:
-    """Fail loud, up front, if the substrate is absent -- before any tmux work.
-
-    A smart verb that cannot reach amplifier-agent must say so and stop, not
-    quietly return a deterministic approximation. Checking here (rather than
-    only inside ``run_agent_turn``) means the refusal does not depend on there
-    being a live tmux server to assemble context from first.
-    """
-    if not agent.agent_available():
-        raise agent.AgentUnavailable(agent.INSTALL_HINT)
 
 
 _ATTENTION_BUCKETS = [
@@ -172,49 +164,54 @@ async def triage(
 
     Context (every session's sliver + the heuristic attention ordering) is
     assembled mechanically by ``attention``/``list_sessions``; the model is
-    asked only to judge it. Executes through amplifier-agent; with no working
-    agent this raises ``AgentUnavailable`` naming the remedy -- never a silent
-    fallback.
+    asked only to judge it. Executes through the embedded amplifier-agent engine;
+    with no usable substrate this raises ``AgentUnavailable`` naming exactly which
+    precondition is missing -- never a silent fallback.
     """
-    _require_agent()
+    # Resolve the substrate FIRST, before any tmux work: a refusal must not
+    # depend on there being a live tmux server to assemble context from.
+    session = await agent.prepare_turn()
+    try:
+        # ONE consistent snapshot of the WHOLE fleet. The deterministic
+        # `attention` rollup gives a heuristic prior, but its candidate list
+        # EXCLUDES working sessions -- handing the model only candidates makes the
+        # session count disagree with the session list, and the model (correctly)
+        # spends its attention reconciling that data gap instead of triaging. So
+        # the model gets every session, plus the heuristic ordering as a hint.
+        listing = await fleet.list_sessions(socket_dir=socket_dir, socket_name=socket_name)
+        rows = listing["sessions"]
+        order = _attention_order(rows, quiet_seconds)
 
-    # ONE consistent snapshot of the WHOLE fleet. The deterministic `attention`
-    # rollup gives a heuristic prior, but its candidate list EXCLUDES working
-    # sessions -- handing the model only candidates makes the session count
-    # disagree with the session list, and the model (correctly) spends its
-    # attention reconciling that data gap instead of triaging. So the model gets
-    # every session, plus the heuristic ordering as a hint.
-    listing = await fleet.list_sessions(socket_dir=socket_dir, socket_name=socket_name)
-    rows = listing["sessions"]
-    order = _attention_order(rows, quiet_seconds)
+        context = {
+            "server_running": listing["server_running"],
+            "fleet_counts": listing["counts"],
+            "quiet_threshold_seconds": quiet_seconds,
+            "heuristic_attention_order": order,
+            "sessions": [
+                {
+                    "session": row["session"],
+                    "last_line": row.get("last_line"),
+                    "at_prompt": row.get("at_prompt"),
+                    "at_prompt_reason": row.get("at_prompt_reason"),
+                    "annotation": row.get("annotation"),
+                    "harness": row.get("harness"),
+                    "idle_seconds": row.get("idle_seconds"),
+                    "cwd": row.get("cwd"),
+                }
+                for row in rows
+            ],
+        }
 
-    context = {
-        "server_running": listing["server_running"],
-        "fleet_counts": listing["counts"],
-        "quiet_threshold_seconds": quiet_seconds,
-        "heuristic_attention_order": order,
-        "sessions": [
-            {
-                "session": row["session"],
-                "last_line": row.get("last_line"),
-                "at_prompt": row.get("at_prompt"),
-                "at_prompt_reason": row.get("at_prompt_reason"),
-                "annotation": row.get("annotation"),
-                "harness": row.get("harness"),
-                "idle_seconds": row.get("idle_seconds"),
-                "cwd": row.get("cwd"),
-            }
-            for row in rows
-        ],
-    }
+        prompt = (
+            _TRIAGE_INSTRUCTIONS
+            + "\n\nFLEET SNAPSHOT (JSON):\n"
+            + json.dumps(context, indent=2, sort_keys=False)
+        )
 
-    prompt = (
-        _TRIAGE_INSTRUCTIONS
-        + "\n\nFLEET SNAPSHOT (JSON):\n"
-        + json.dumps(context, indent=2, sort_keys=False)
-    )
+        raw = await session.submit(prompt, timeout_ms=timeout_ms)
+    finally:
+        await session.aclose()
 
-    raw = await asyncio.to_thread(agent.run_agent_turn, prompt, timeout_ms=timeout_ms)
     parsed = _extract_json(raw)
     if not isinstance(parsed, dict):
         raise agent.AgentError(
@@ -225,7 +222,8 @@ async def triage(
     return {
         "verb": "triage",
         "model_backed": True,
-        "executed_through": "amplifier-agent",
+        "executed_through": "amplifier-agent engine (embedded, in-process)",
+        "provider": session.provider,
         "socket": listing["socket"],
         "server_running": listing["server_running"],
         "triage": parsed,
@@ -254,32 +252,37 @@ async def interpret(
     """[model-backed] What this session's state/output means, structured.
 
     The scrollback is captured mechanically by ``read``; the model is asked only
-    to interpret it. Executes through amplifier-agent; with no working agent this
-    raises ``AgentUnavailable`` naming the remedy.
+    to interpret it. Executes through the embedded amplifier-agent engine; with no
+    usable substrate this raises ``AgentUnavailable`` naming exactly which
+    precondition is missing.
     """
-    _require_agent()
+    # Resolve the substrate FIRST, before any tmux work.
+    agent_session = await agent.prepare_turn()
+    try:
+        read = await fleet.read_session(
+            session, lines=lines, socket_dir=socket_dir, socket_name=socket_name
+        )
 
-    read = await fleet.read_session(
-        session, lines=lines, socket_dir=socket_dir, socket_name=socket_name
-    )
+        context = {
+            "session": session,
+            "last_line": read.get("last_line"),
+            "at_prompt": read.get("at_prompt"),
+            "at_prompt_reason": read.get("at_prompt_reason"),
+            "annotation": read.get("annotation"),
+            "completeness": read.get("_completeness"),
+            "pane": read.get("pane"),
+        }
 
-    context = {
-        "session": session,
-        "last_line": read.get("last_line"),
-        "at_prompt": read.get("at_prompt"),
-        "at_prompt_reason": read.get("at_prompt_reason"),
-        "annotation": read.get("annotation"),
-        "completeness": read.get("_completeness"),
-        "pane": read.get("pane"),
-    }
+        prompt = (
+            _INTERPRET_INSTRUCTIONS
+            + "\n\nSESSION CAPTURE (JSON):\n"
+            + json.dumps(context, indent=2, sort_keys=False)
+        )
 
-    prompt = (
-        _INTERPRET_INSTRUCTIONS
-        + "\n\nSESSION CAPTURE (JSON):\n"
-        + json.dumps(context, indent=2, sort_keys=False)
-    )
+        raw = await agent_session.submit(prompt, timeout_ms=timeout_ms)
+    finally:
+        await agent_session.aclose()
 
-    raw = await asyncio.to_thread(agent.run_agent_turn, prompt, timeout_ms=timeout_ms)
     parsed = _extract_json(raw)
     if not isinstance(parsed, dict):
         raise agent.AgentError(
@@ -290,7 +293,8 @@ async def interpret(
     return {
         "verb": "interpret",
         "model_backed": True,
-        "executed_through": "amplifier-agent",
+        "executed_through": "amplifier-agent engine (embedded, in-process)",
+        "provider": agent_session.provider,
         "socket": read["socket"],
         "session": session,
         "interpretation": parsed,

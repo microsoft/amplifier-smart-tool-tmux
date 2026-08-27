@@ -1,14 +1,15 @@
 ---
 smart_tool_format: 1
 name: tmux-fleet
-version: 0.1.0
+version: 0.2.0
 description: >
   Tells you what is happening across every tmux session on a machine — which are
   parked at a prompt, which finished and how, which need a human — and, only
   under explicit per-invocation confirmation, types into one or starts one.
   Reach for it when a box is running many tmux sessions (agents, builds, REPLs,
   long jobs) and "what needs me right now?" is the question, or when something
-  needs one keystroke or one new session delivered safely.
+  needs one keystroke or one new session delivered safely. The model-backed
+  verbs run through amplifier-agent's engine embedded in-process.
 use_cases:
   - Survey every tmux session on a machine and see which are parked at a prompt
   - Triage a busy fleet to find which sessions plausibly need a human, and why
@@ -24,13 +25,17 @@ requires:
       The terminal multiplexer this tool observes and drives. Every verb is a
       tmux client; nothing works without it.
     install: docs/installing-tmux.md
-  - name: amplifier-agent
+  - name: ai-provider
     purpose: >
-      The AI substrate the model-backed verbs (triage, interpret) execute
-      through. Optional: without it every deterministic verb still works
-      (socket, sessions, attention, read, send, create, doctor, exit-code); only
-      triage and interpret are unavailable, and they fail loudly naming this
-      remedy rather than degrading to a guess.
+      The model-backed verbs (triage, interpret) run through the amplifier-agent
+      engine, which is embedded in-process and ships as a regular dependency of
+      this tool — nothing to install separately. What they DO need is a provider:
+      a provider SDK, installed via an extra (e.g. `tmux-fleet[anthropic]`), plus
+      that provider's credentials in the environment. Optional: every
+      deterministic verb (socket, sessions, attention, read, send, create,
+      doctor, exit-code) works with no provider at all; only triage and interpret
+      need one, and they fail loudly naming the missing precondition rather than
+      degrading to a guess. This tool never stores credentials of its own.
     optional: true
     install: docs/installing-amplifier-agent.md
 ---
