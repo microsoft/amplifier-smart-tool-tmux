@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-and-conform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install tmux (the tool is a tmux client; deterministic verbs need it)
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Tool test suite
+        run: uv run --with pytest pytest tests/ -q
+
+      - name: Conformance kit's own tests
+        run: uv run --with pytest pytest conformance/tests/ -q
+
+      # Steering enforcement: run the conformance kit against the tool AS IT SHIPS.
+      # Stage the distribution (exclude the dev conformance harness so its fixture
+      # manifests do not trip the "one manifest per distribution root" rule), install
+      # the tool so its `tmux-fleet` console script resolves, then run the kit.
+      - name: Conformance kit against this tool
+        run: |
+          set -euo pipefail
+          uv venv .cikit
+          uv pip install --python .cikit/bin/python -e .
+          export PATH="$PWD/.cikit/bin:$PATH"
+          STAGE="$(mktemp -d)"
+          rsync -a \
+            --exclude='conformance/' --exclude='.git/' --exclude='tests/' \
+            --exclude='.venv/' --exclude='.cikit/' --exclude='__pycache__/' \
+            ./ "$STAGE/"
+          python3 conformance/run.py "$STAGE" --timeout 60
