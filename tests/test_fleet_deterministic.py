@@ -44,7 +44,7 @@ def test_sessions_lists_the_fleet_and_confirms_socket(monkeypatch):
 
 
 def test_sessions_sorted_by_recency_not_alphabetical(monkeypatch):
-    """cortex-xqng: the owner's report -- "alphabetical repeats the same long-
+    """The owner's report -- "alphabetical repeats the same long-
     stale sessions" -- sort by most-recent activity instead. `alpha` is
     alphabetically first but the STALEST; `zulu` is alphabetically last but
     the MOST recently active. The listing must lead with `zulu`, never

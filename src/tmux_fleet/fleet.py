@@ -492,7 +492,7 @@ async def list_sessions(
             }
         )
 
-    # Most-recently-active first (cortex-xqng). Before this, rows carried
+    # Most-recently-active first. Before this, rows carried
     # whatever order `tmux list-sessions` returned them in -- which repeats
     # the same long-stale sessions at the top of every listing instead of
     # surfacing what the owner is actually looking at right now. Missing
