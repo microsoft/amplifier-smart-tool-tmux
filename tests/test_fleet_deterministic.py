@@ -43,6 +43,56 @@ def test_sessions_lists_the_fleet_and_confirms_socket(monkeypatch):
     assert result["socket"]["ambient_ignored"] is True
 
 
+def test_sessions_sorted_by_recency_not_alphabetical(monkeypatch):
+    """cortex-xqng: the owner's report -- "alphabetical repeats the same long-
+    stale sessions" -- sort by most-recent activity instead. `alpha` is
+    alphabetically first but the STALEST; `zulu` is alphabetically last but
+    the MOST recently active. The listing must lead with `zulu`, never
+    `alpha`, proving the order tracks activity and not the name."""
+
+    async def fake_enumerate():
+        return (
+            ["alpha", "mike", "zulu"],
+            {"alpha": 1000.0, "mike": 2000.0, "zulu": 3000.0},
+            {"alpha": 1000.0, "mike": 2000.0, "zulu": 3000.0},
+            {},
+        )
+
+    monkeypatch.setattr(fleet, "_enumerate_sessions_scoped", fake_enumerate)
+
+    async def scenario():
+        async with make_fleet("anchor") as (_srv, kw):
+            return await fleet.list_sessions(**kw)
+
+    result = run(scenario())
+    ordered = [r["session"] for r in result["sessions"]]
+    assert ordered == ["zulu", "mike", "alpha"]
+
+
+def test_sessions_with_unknown_activity_sort_last_by_name(monkeypatch):
+    """A session this tool cannot date must never be presented as the most
+    recent -- it sorts after every session with real activity data, and the
+    unknowns among themselves fall back to the name tiebreak."""
+
+    async def fake_enumerate():
+        return (
+            ["known", "mystery-b", "mystery-a"],
+            {"known": 5000.0},  # the mystery-* sessions have no activity entry
+            {},
+            {},
+        )
+
+    monkeypatch.setattr(fleet, "_enumerate_sessions_scoped", fake_enumerate)
+
+    async def scenario():
+        async with make_fleet("anchor") as (_srv, kw):
+            return await fleet.list_sessions(**kw)
+
+    result = run(scenario())
+    ordered = [r["session"] for r in result["sessions"]]
+    assert ordered == ["known", "mystery-a", "mystery-b"]
+
+
 def test_socket_status_reports_running_and_counts():
     async def scenario():
         async with make_fleet("only") as (_srv, kw):

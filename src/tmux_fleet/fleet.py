@@ -492,6 +492,18 @@ async def list_sessions(
             }
         )
 
+    # Most-recently-active first (cortex-xqng). Before this, rows carried
+    # whatever order `tmux list-sessions` returned them in -- which repeats
+    # the same long-stale sessions at the top of every listing instead of
+    # surfacing what the owner is actually looking at right now. Missing
+    # activity (no window_activity parsed) sorts LAST, never first: a session
+    # this tool cannot date is not "most recent," and must not be presented
+    # as if it were. `session` name is the tiebreak, purely for a stable,
+    # reproducible order when two sessions share a timestamp.
+    rows.sort(
+        key=lambda r: (-(activity.get(r["session"], float("-inf"))), r["session"])
+    )
+
     counts = {
         "session_count": len(rows),
         "at_prompt_yes": sum(1 for r in rows if r["at_prompt"] == "yes"),
