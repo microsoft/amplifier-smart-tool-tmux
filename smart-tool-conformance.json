@@ -1,5 +1,0 @@
-{
-  "cli_argv": ["tmux-fleet"],
-  "deterministic_smoke": ["doctor"],
-  "bad_invocation": ["no-such-verb"]
-}

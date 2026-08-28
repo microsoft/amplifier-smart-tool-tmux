@@ -13,3 +13,5 @@ build/
 
 # Lane infrastructure (not part of the deliverable)
 /GOAL.md
+
+evidence/*.out.txt

@@ -29,10 +29,14 @@ _ALLOWED = {
 }
 
 
-def test_root_and_packaged_copy_are_byte_identical():
-    root = (_REPO_ROOT / "SMART_TOOL.md").read_bytes()
-    packaged = (_REPO_ROOT / "src" / "tmux_fleet" / "_smart_tool.md").read_bytes()
-    assert root == packaged, "the root manifest and the packaged copy must not drift"
+def test_exactly_one_manifest_ships_with_the_tool():
+    """One manifest, one copy, beside the code that reads it."""
+    found = [
+        p
+        for p in _REPO_ROOT.rglob("SMART_TOOL.md")
+        if "conformance" not in p.parts and ".git" not in p.parts
+    ]
+    assert found == [_REPO_ROOT / "src" / "tmux_fleet" / "SMART_TOOL.md"], found
 
 
 def test_accessor_returns_structured_manifest():

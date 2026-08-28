@@ -16,9 +16,9 @@ Add the first conformance kit: turn the spec's must/must-not prose into executab
 The spec today is prose. There is no way for a tool author -- or a future
 registry -- to *mechanically* answer "is this a conforming smart tool?" This
 offer contributes a small, dependency-free kit that operationalizes the
-normative sentences in `structure.md`, `manifest.md`, and `invocation.md` into
-13 executable checks, with fixtures that prove each check discriminates a
-conforming tool from a violating one.
+normative sentences in `structure.md`, `manifest.md`, `invocation.md`, and
+`packaging.md` into 14 executable checks, with fixtures that prove each check
+discriminates a conforming tool from a violating one.
 
 It is generic over any smart tool (it ships its own fixtures and knows nothing
 about any particular tool), stdlib-only, and honest about what it cannot
@@ -46,14 +46,15 @@ when no invocation recipe is discoverable).
 
 | # | Rule id | Spec source | Sentence operationalized |
 |---|---------|-------------|--------------------------|
-| M1 | `manifest-present` | `manifest.md` | "`SMART_TOOL.md` at the distribution root." |
+| D1 | `descriptor-present` | `packaging.md` | "`smart-tool.json`, at the distribution root ... `manifest`: required. Path to `SMART_TOOL.md`, relative to this file." |
+| M1 | `manifest-present` | `manifest.md` | "the descriptor at the distribution root says where the manifest is." |
 | M2 | `manifest-frontmatter-parses` | `manifest.md` | "YAML frontmatter, then a Markdown body." |
 | M3 | `manifest-fields-closed` | `manifest.md` | "Fields not listed here are not part of the manifest." |
 | M4 | `manifest-required-fields` | `manifest.md` | The frontmatter fields (`smart_tool_format`, `name`, `version`, `description`, `use_cases`, `platforms`) each described as part of the manifest. |
 | M5 | `manifest-name-format` | `manifest.md` | "`name` is lowercase alphanumeric and hyphens." |
 | M6 | `manifest-version-matches-package` | `manifest.md` | "`version` ... matches the version in the package definition." |
 | M7 | `manifest-requires-shape` | `manifest.md` | "Each entry carries `name`, `purpose`, and `install`, and may carry `optional`. `install` is a reference to documentation ... never a command." |
-| M8 | `manifest-single-per-root` | `manifest.md` | "Exactly one manifest per distribution. A second `SMART_TOOL.md` beneath a distribution root is *incorrect*." |
+| M8 | `manifest-single-per-root` | `manifest.md` | "Exactly one manifest per distribution ... A manifest under a nested descriptor belongs to that tool and does not count against this one." |
 | R1 | `loads-without-provider` | `structure.md` | "the straight code paths run with no model provider configured ... the tool must not refuse to load without them." |
 | R2 | `help-discloses-model-backed` | `invocation.md` | "`--help` ... which of them are model-backed." |
 | R3 | `deterministic-capability-runs` | `structure.md` | "A caller that only wants the deterministic capabilities never has to supply model credentials." |
@@ -89,13 +90,13 @@ to bless (or adjust) explicitly:
 
 ## Runtime-check invocation model
 
-The runtime rules need to run the tool. The kit discovers how in a
-language-agnostic way: an optional `smart-tool-conformance.json` hint
-(`cli_argv` / `deterministic_smoke` / `bad_invocation`) at the distribution
-root, or, for Python tools, a `[project.scripts]` entry driven through `uv run`.
-With neither present the runtime rules SKIP. If the spec later standardizes a
-self-description surface, that becomes the natural discovery mechanism and the
-hint can retire.
+The runtime rules need to run the tool. The kit learns how from
+`smart-tool.json` at the distribution root (`manifest` / `cli_argv` /
+`deterministic_smoke`), which the spec standardizes. That is the only source:
+the kit never installs the tool under test, so it works against any ecosystem
+and is handed something that already runs, from source or installed onto the
+path. Without a descriptor, `descriptor-present` fails and the runtime rules
+SKIP.
 
 ## What's in the kit
 
@@ -110,7 +111,7 @@ conformance/
   tests/                     # parser unit tests + end-to-end discrimination
 ```
 
-Evidence of discrimination: `sample-good` passes all 13 rules; each
+Evidence of discrimination: `sample-good` passes all 14 rules; each
 `sample-bad-*` fixture fails with its rule named. `uv run --with pytest pytest -q`
 is green.
 

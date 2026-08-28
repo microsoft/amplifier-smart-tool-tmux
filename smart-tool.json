@@ -1,0 +1,5 @@
+{
+  "manifest": "src/tmux_fleet/SMART_TOOL.md",
+  "cli_argv": ["tmux-fleet"],
+  "deterministic_smoke": ["doctor"]
+}

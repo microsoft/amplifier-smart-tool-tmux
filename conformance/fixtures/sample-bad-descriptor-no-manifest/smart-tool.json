@@ -1,0 +1,13 @@
+{
+  "cli_argv": [
+    "uv",
+    "run",
+    "--no-project",
+    "src/samplegood/cli.py"
+  ],
+  "deterministic_smoke": [
+    "stats",
+    "--text",
+    "hello world"
+  ]
+}

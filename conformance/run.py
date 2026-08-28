@@ -10,8 +10,7 @@ The first machine-checkable conformance kit for the amplifier-smart-tools-spec
 over ANY smart tool: point it at a distribution root and it derives a verdict
 from the spec's must / must-not prose.
 
-  usage:  python3 run.py <tool-dir> [--timeout SECONDS] [--json-only]
-          uv run conformance/run.py <tool-dir>
+  usage:  uv run conformance/run.py <tool-dir> [--timeout SECONDS] [--json-only]
 
 Design commitments (mirroring proven conformance kits):
   * stdlib only -- no third-party dependency, no network access;
@@ -29,18 +28,20 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 
 PASS = "PASS"
 FAIL = "FAIL"
 SKIP = "SKIP"
 
 MANIFEST_NAME = "SMART_TOOL.md"
-HINT_NAME = "smart-tool-conformance.json"
+DESCRIPTOR_NAME = "smart-tool.json"
 
 # The manifest frontmatter is a closed set. "Fields not listed here are not part
 # of the manifest." (manifest.md)
@@ -92,6 +93,11 @@ SHELL_META = ("&&", "||", "|", ";", "$(", "`", ">", "<")
 # are model-backed".
 DISCLOSURE_TOKENS = ("model-backed", "model backed", "modelbacked")
 
+# Appended to cli_argv to provoke a failure, so R4 can inspect its shape. A verb
+# no tool defines, rather than a flag, since an unknown flag and an unknown verb
+# take different paths through most argument parsers.
+BAD_INVOCATION = ("__conformance_no_such_verb__",)
+
 
 # --------------------------------------------------------------------------- #
 # Result plumbing
@@ -108,7 +114,7 @@ class Check:
 class Recipe:
     argv: list[str] | None = None
     smoke: list[str] | None = None
-    bad: list[str] = field(default_factory=lambda: ["__conformance_no_such_verb__"])
+    bad: list[str] = field(default_factory=lambda: list(BAD_INVOCATION))
     reason: str = ""  # why argv is None, if it is
 
 
@@ -293,42 +299,38 @@ def package_version(target: Path):
     return None, "no package definition (pyproject.toml / package.json) found"
 
 
-def discover_recipe(target: Path) -> Recipe:
-    """Determine how to invoke the tool's CLI, or explain why we cannot."""
-    hint_path = target / HINT_NAME
-    if hint_path.is_file():
-        try:
-            hint = json.loads(hint_path.read_text(encoding="utf-8"))
-        except Exception as exc:  # noqa: BLE001
-            return Recipe(reason=f"{HINT_NAME} unparseable: {exc}")
-        argv = hint.get("cli_argv")
-        if isinstance(argv, list) and argv:
-            argv = list(argv)
-            if argv[0] in ("python", "python3"):
-                argv[0] = sys.executable
-            rec = Recipe(argv=argv)
-            if isinstance(hint.get("deterministic_smoke"), list):
-                rec.smoke = list(hint["deterministic_smoke"])
-            if isinstance(hint.get("bad_invocation"), list) and hint["bad_invocation"]:
-                rec.bad = list(hint["bad_invocation"])
-            return rec
+def load_descriptor(target: Path) -> tuple[dict | None, str]:
+    """Return (descriptor, "") or (None, reason it is unusable)."""
+    path = target / DESCRIPTOR_NAME
+    if not path.is_file():
+        return None, f"no {DESCRIPTOR_NAME} at the distribution root"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{DESCRIPTOR_NAME} unparseable: {exc}"
+    if not isinstance(data, dict):
+        return None, f"{DESCRIPTOR_NAME} is not a JSON object"
+    return data, ""
 
-    # Fall back to a Python [project.scripts] entry driven through `uv run`.
-    py = target / "pyproject.toml"
-    if py.is_file():
-        try:
-            data = tomllib.loads(py.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            data = {}
-        scripts = data.get("project", {}).get("scripts", {})
-        if scripts:
-            import shutil
 
-            if shutil.which("uv"):
-                script = next(iter(scripts))
-                return Recipe(argv=["uv", "run", "--project", str(target), script])
-            return Recipe(reason="pyproject declares [project.scripts] but 'uv' is not on PATH to run it")
-    return Recipe(reason=f"no CLI entry point discoverable (no {HINT_NAME}, no [project.scripts])")
+def discover_recipe(descriptor: dict | None, descriptor_error: str, target: Path) -> Recipe:
+    """Determine how to invoke the tool's CLI, or explain why we cannot.
+
+    The descriptor is the only source: the kit never installs the tool under test.
+    """
+    if descriptor is None:
+        return Recipe(reason=descriptor_error)
+    argv = descriptor.get("cli_argv")
+    if not isinstance(argv, list) or not argv:
+        return Recipe(reason=f"{DESCRIPTOR_NAME} has no non-empty 'cli_argv' list")
+    argv = [_absolutize(a, target) for a in argv]
+    unresolved = _unresolved_executable(argv[0], target)
+    if unresolved:
+        return Recipe(reason=unresolved)
+    rec = Recipe(argv=argv)
+    if isinstance(descriptor.get("deterministic_smoke"), list):
+        rec.smoke = list(descriptor["deterministic_smoke"])
+    return rec
 
 
 def scrubbed_env() -> dict:
@@ -377,8 +379,33 @@ def evaluate(target: str | Path, timeout: float = 20.0) -> dict:
     def add(id_, status, spec, detail=""):
         checks.append(Check(id_, status, spec, detail))
 
+    # --- Descriptor --------------------------------------------------------- #
+    descriptor, descriptor_error = load_descriptor(target)
+    descriptor_spec = ("packaging.md: 'smart-tool.json, at the distribution root ... "
+                       "manifest: required. Path to SMART_TOOL.md, relative to this file.'")
+    manifest_rel = descriptor.get("manifest") if descriptor else None
+
+    if descriptor is None:
+        add("descriptor-present", FAIL, descriptor_spec, descriptor_error)
+    elif not isinstance(manifest_rel, str) or not manifest_rel.strip():
+        add("descriptor-present", FAIL, descriptor_spec,
+            f"{DESCRIPTOR_NAME} has no 'manifest' path")
+        manifest_rel = None
+    elif not isinstance(descriptor.get("cli_argv"), list) or not descriptor["cli_argv"]:
+        add("descriptor-present", FAIL, descriptor_spec,
+            f"{DESCRIPTOR_NAME} has no non-empty 'cli_argv' list")
+    else:
+        add("descriptor-present", PASS, descriptor_spec,
+            f"{DESCRIPTOR_NAME} names the manifest and how to launch the CLI")
+
     # --- Manifest gathering ------------------------------------------------- #
-    manifest_path = target / MANIFEST_NAME
+    # Where the manifest sits is the tool's choice, so the descriptor names it
+    # rather than the kit searching for it.
+    found_manifests = sorted(_find_manifests(target))
+    if manifest_rel:
+        manifest_path = (target / manifest_rel).resolve()
+    else:
+        manifest_path = target / MANIFEST_NAME
     fm: dict | None = None
     fm_error: str | None = None
     if manifest_path.is_file():
@@ -392,12 +419,20 @@ def evaluate(target: str | Path, timeout: float = 20.0) -> dict:
             fm_error = f"unexpected parse error: {exc}"
 
     # M1 manifest-present
-    if manifest_path.is_file():
-        add("manifest-present", PASS, "manifest.md: 'SMART_TOOL.md at the distribution root.'",
-            f"{MANIFEST_NAME} found at distribution root")
+    manifest_spec = ("manifest.md: 'the descriptor at the distribution root says where the "
+                     "manifest is.'")
+    if manifest_rel is None:
+        add("manifest-present", FAIL, manifest_spec,
+            f"{DESCRIPTOR_NAME} does not name a manifest (see descriptor-present)")
+    elif not _within(manifest_path, target):
+        add("manifest-present", FAIL, manifest_spec,
+            f"'manifest': {manifest_rel!r} resolves outside the distribution root")
+    elif manifest_path.is_file():
+        add("manifest-present", PASS, manifest_spec,
+            f"{MANIFEST_NAME} found at {manifest_path.relative_to(target)}")
     else:
-        add("manifest-present", FAIL, "manifest.md: 'SMART_TOOL.md at the distribution root.'",
-            f"no {MANIFEST_NAME} at {target}")
+        add("manifest-present", FAIL, manifest_spec,
+            f"'manifest': {manifest_rel!r} does not exist")
 
     # M2 manifest-frontmatter-parses
     if not manifest_path.is_file():
@@ -523,7 +558,7 @@ def evaluate(target: str | Path, timeout: float = 20.0) -> dict:
                 f"{len(req)} requires entry(ies) well-formed")
 
     # M8 manifest-single-per-root
-    found = _find_manifests(target)
+    found = found_manifests
     if len(found) > 1:
         rels = ", ".join(sorted(str(p.relative_to(target)) for p in found))
         add("manifest-single-per-root", FAIL,
@@ -540,13 +575,21 @@ def evaluate(target: str | Path, timeout: float = 20.0) -> dict:
             "beneath a distribution root is incorrect.'", "no manifest found under root")
 
     # --- Runtime gathering -------------------------------------------------- #
-    recipe = discover_recipe(target)
+    # The tool runs from a scratch directory, never from its own. A conformance
+    # run inspects a distribution; it must not be able to leave anything behind
+    # in one. Anything the tool writes relative to its working directory lands
+    # here and is discarded.
+    recipe = discover_recipe(descriptor, descriptor_error, target)
     help_run = smoke_run = bad_run = None
     if recipe.argv is not None:
-        help_run = run_cli(recipe.argv + ["--help"], target, timeout, scrub=True)
-        if recipe.smoke:
-            smoke_run = run_cli(recipe.argv + recipe.smoke, target, timeout, scrub=True)
-        bad_run = run_cli(recipe.argv + recipe.bad, target, timeout, scrub=True)
+        scratch = Path(tempfile.mkdtemp(prefix="smart-tools-conformance-"))
+        try:
+            help_run = run_cli(recipe.argv + ["--help"], scratch, timeout, scrub=True)
+            if recipe.smoke:
+                smoke_run = run_cli(recipe.argv + recipe.smoke, scratch, timeout, scrub=True)
+            bad_run = run_cli(recipe.argv + recipe.bad, scratch, timeout, scrub=True)
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
 
     # R1 loads-without-provider
     spec_r1 = ("structure.md: 'the straight code paths run with no model provider configured "
@@ -588,7 +631,7 @@ def evaluate(target: str | Path, timeout: float = 20.0) -> dict:
         add("deterministic-capability-runs", SKIP, spec_r3, recipe.reason)
     elif not recipe.smoke:
         add("deterministic-capability-runs", SKIP, spec_r3,
-            "no deterministic smoke invocation declared (smart-tool-conformance.json)")
+            "no deterministic smoke invocation declared (smart-tool.json)")
     elif smoke_run.timed_out:
         add("deterministic-capability-runs", FAIL, spec_r3,
             f"deterministic '{' '.join(recipe.smoke)}' did not complete within {timeout:g}s "
@@ -657,6 +700,58 @@ def evaluate(target: str | Path, timeout: float = 20.0) -> dict:
     }
 
 
+def _absolutize(arg: str, target: Path) -> str:
+    """Resolve a cli_argv element that names a file inside the distribution.
+
+    The tool is run from a scratch directory rather than its own, so a path
+    relative to the distribution root would not resolve. An element is rewritten
+    only when it both names a file under the root and looks like a filename: it
+    carries a separator or a suffix. That leaves subcommands and flags alone, so
+    a root that happens to contain a file called `run` does not turn `uv run`
+    into a path.
+    """
+    if os.path.isabs(arg):
+        return arg
+    looks_like_path = (
+        os.sep in arg or (os.altsep is not None and os.altsep in arg) or bool(PurePath(arg).suffix)
+    )
+    if not looks_like_path:
+        return arg
+    candidate = target / arg
+    return str(candidate.resolve()) if candidate.is_file() else arg
+
+
+def _within(path: Path, root: Path) -> bool:
+    """True if path is inside root, so a descriptor cannot point outside its own tool."""
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _unresolved_executable(exe: str, target: Path) -> str | None:
+    """Explain why cli_argv[0] cannot be launched, or None if it can.
+
+    A descriptor naming an absent binary is an unmet precondition, not a crash.
+    """
+    import shutil
+
+    if os.sep in exe or (os.altsep and os.altsep in exe):
+        path = (target / exe).resolve() if not os.path.isabs(exe) else Path(exe)
+        if not path.is_file():
+            return f"cli_argv[0] '{exe}' does not exist relative to the distribution root"
+        if not os.access(path, os.X_OK):
+            return f"cli_argv[0] '{exe}' is not executable"
+        return None
+    if shutil.which(exe) is None:
+        return (
+            f"cli_argv[0] '{exe}' was not found on PATH -- the tool must be installed "
+            "or runnable before conformance runs (packaging.md: the kit never installs)"
+        )
+    return None
+
+
 def _install_command_reason(install: str) -> str | None:
     s = install.strip()
     if not s:
@@ -671,9 +766,18 @@ def _install_command_reason(install: str) -> str | None:
 
 
 def _find_manifests(root: Path) -> list[Path]:
+    """Manifests belonging to this distribution.
+
+    A subdirectory carrying its own descriptor is a nested distribution, and its
+    manifest is not this tool's.
+    """
     out: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in WALK_SKIP]
+        dirnames[:] = [
+            d
+            for d in dirnames
+            if d not in WALK_SKIP and not (Path(dirpath) / d / DESCRIPTOR_NAME).is_file()
+        ]
         if MANIFEST_NAME in filenames:
             out.append(Path(dirpath) / MANIFEST_NAME)
     return out

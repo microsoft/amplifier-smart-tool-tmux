@@ -1,6 +1,8 @@
 """Discrimination tests: the kit is green on sample-good and red-with-named-rule
 on every sample-bad fixture."""
 
+import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,7 @@ TIMEOUT = 4.0
 # cannot run its deterministic verb); we assert the primary rule is *among* the
 # failures, not that it is the only one.
 EXPECTED_PRIMARY = {
+    "sample-bad-descriptor-no-manifest": "descriptor-present",
     "sample-bad-manifest-missing": "manifest-present",
     "sample-bad-frontmatter-broken": "manifest-frontmatter-parses",
     "sample-bad-extra-field": "manifest-fields-closed",
@@ -43,6 +46,29 @@ def test_sample_good_is_green():
     assert result["counts"]["fail"] == 0
     # sample-good is a complete tool: nothing should even be skipped.
     assert result["counts"]["skip"] == 0, result["failed_rules"]
+
+
+def test_manifest_is_found_inside_the_package():
+    """The manifest sits where packaging carries it into the built artifact.
+
+    For a src layout that is the module directory, not the directory holding the
+    package definition. The descriptor names that path, so discovery works
+    wherever an ecosystem's build requires the manifest to live.
+    """
+    result = _evaluate("sample-good")
+    present = next(c for c in result["checks"] if c["id"] == "manifest-present")
+    assert "src/samplegood/SMART_TOOL.md" in present["detail"]
+
+
+def test_nested_distribution_does_not_count_against_its_parent():
+    """A vendored tool's tree is bounded by its own descriptor.
+
+    The fixtures directory holds many distributions, each with a manifest. A tool
+    that vendors it must not thereby trip manifest-single-per-root.
+    """
+    result = run.evaluate(FIXTURES_DIR.parent, timeout=TIMEOUT)
+    by_id = {c["id"]: c["status"] for c in result["checks"]}
+    assert by_id["manifest-single-per-root"] != run.FAIL
 
 
 @pytest.mark.parametrize("fixture,primary", sorted(EXPECTED_PRIMARY.items()))
@@ -76,9 +102,45 @@ def test_skip_is_honest_never_a_fabricated_pass():
     assert by_id["manifest-version-matches-package"] == run.SKIP
 
 
-def test_runtime_rules_skip_when_no_cli(tmp_path: Path):
-    """A tool with a valid manifest but no discoverable CLI recipe SKIPs the
-    runtime rules honestly rather than passing or failing them."""
+def test_tool_runs_in_a_scratch_directory(tmp_path: Path):
+    """A conformance run leaves nothing behind in the distribution it inspects.
+
+    The tool is started from a scratch directory, so anything it writes relative
+    to its working directory lands there rather than in its own tree.
+    """
+    tool = tmp_path / "tool"
+    shutil.copytree(FIXTURES_DIR / "sample-good", tool)
+
+    # A wrapper that litters its working directory, then defers to the real CLI.
+    # Wrapping rather than editing cli.py keeps the tool itself valid, so a
+    # crash cannot masquerade as "nothing was written".
+    (tool / "litter_wrapper.py").write_text(
+        "import runpy\n"
+        "from pathlib import Path\n"
+        "Path('LITTER.txt').write_text('written from the working directory')\n"
+        "cli = Path(__file__).parent / 'src' / 'samplegood' / 'cli.py'\n"
+        "runpy.run_path(str(cli), run_name='__main__')\n",
+        encoding="utf-8",
+    )
+    descriptor = json.loads((tool / "smart-tool.json").read_text())
+    descriptor["cli_argv"] = ["uv", "run", "--no-project", "litter_wrapper.py"]
+    (tool / "smart-tool.json").write_text(json.dumps(descriptor, indent=2), encoding="utf-8")
+
+    result = run.evaluate(tool, timeout=TIMEOUT)
+
+    # The CLI really ran: --help succeeded through the wrapper.
+    by_id = {c["id"]: c["status"] for c in result["checks"]}
+    assert by_id["loads-without-provider"] == run.PASS, "the wrapper never reached the CLI"
+    assert not list(tool.rglob("LITTER.txt")), "the tool wrote into the distribution"
+
+
+def test_runtime_rules_skip_without_a_descriptor(tmp_path: Path):
+    """A directory with a manifest but no descriptor is not a distribution.
+
+    The runtime rules cannot be evaluated without one, so they SKIP honestly
+    rather than being fabricated as PASS or condemned as FAIL. The missing
+    descriptor itself is what fails.
+    """
     (tmp_path / "SMART_TOOL.md").write_text(
         "---\n"
         "smart_tool_format: 1\n"
@@ -102,9 +164,10 @@ def test_runtime_rules_skip_when_no_cli(tmp_path: Path):
         "failure-names-remedy",
         "no-hang-stdin-closed",
     ):
-        assert by_id[rule] == run.SKIP, f"{rule} should SKIP without a CLI recipe"
-    # No FAILs -> a manifest-only artifact is not falsely condemned.
-    assert result["counts"]["fail"] == 0
+        assert by_id[rule] == run.SKIP, f"{rule} should SKIP without a descriptor"
+    assert by_id["descriptor-present"] == run.FAIL
+    # Nothing beyond the missing descriptor and the manifest it would have named.
+    assert set(result["failed_rules"]) == {"descriptor-present", "manifest-present"}
 
 
 def test_verdict_json_shape():

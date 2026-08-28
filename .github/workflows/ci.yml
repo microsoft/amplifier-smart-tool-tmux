@@ -25,9 +25,9 @@ jobs:
         run: uv run --with pytest pytest conformance/tests/ -q
 
       # Steering enforcement: run the conformance kit against the tool AS IT SHIPS.
-      # Stage the distribution (exclude the dev conformance harness so its fixture
-      # manifests do not trip the "one manifest per distribution root" rule), install
-      # the tool so its `tmux-fleet` console script resolves, then run the kit.
+      # Stage the distribution (excluding the dev harness and test suite, which are
+      # not part of it), install the tool so its `tmux-fleet` console script
+      # resolves, then run the kit.
       - name: Conformance kit against this tool
         run: |
           set -euo pipefail
