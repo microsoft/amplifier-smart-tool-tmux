@@ -168,6 +168,11 @@ async def triage(
     with no usable substrate this raises ``AgentUnavailable`` naming exactly which
     precondition is missing -- never a silent fallback.
     """
+    # An unusable argument is refused before anything else: neither a live tmux
+    # server nor a configured provider is needed to know the call is malformed,
+    # and resolving a substrate first would spend a provider connection on a
+    # turn that can never be run.
+    fleet.check_quiet_seconds(quiet_seconds)
     # Resolve the substrate FIRST, before any tmux work: a refusal must not
     # depend on there being a live tmux server to assemble context from.
     session = await agent.prepare_turn()

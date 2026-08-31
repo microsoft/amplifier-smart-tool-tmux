@@ -61,6 +61,23 @@ class FleetError(RuntimeError):
     """A read or write failed. Always fatal -- never a partial answer."""
 
 
+def check_quiet_seconds(quiet_seconds: int) -> None:
+    """Refuse a quiet threshold that cannot mean what it says.
+
+    A negative threshold makes ``idle >= quiet_seconds`` true for every session,
+    so the whole fleet silently lands in a "quiet" bucket and the ordering the
+    caller asked for is not the ordering it gets. Two verbs take this argument
+    (``attention`` and ``triage``) and both must refuse it identically, hence
+    one check rather than two messages that can drift apart.
+    """
+    if quiet_seconds < 0:
+        raise FleetError(
+            f"REFUSED: --quiet-seconds must be >= 0 (got {quiet_seconds}). A "
+            "negative threshold marks every session quiet regardless of its "
+            "idle time, which would reorder the whole result without saying so."
+        )
+
+
 def _absent_server_reason(stderr: str) -> str | None:
     """Is this tmux error "nothing is there", or "I cannot tell"?
 
@@ -434,6 +451,14 @@ async def list_sessions(
     row and the scope string that describes them come from the same server. The
     snapshot here is a SLIVER -- `read` before you characterize anything.
     """
+    if snapshot_lines < 1:
+        raise FleetError(
+            f"REFUSED: --snapshot-lines must be >= 1 (got {snapshot_lines}). "
+            "tmux reads a depth below one as some other depth entirely, so the "
+            "capture would silently differ from the one the `_completeness` "
+            "block reports -- and that block is the only honest bound a caller "
+            "has on what came back."
+        )
     resolution = socket_resolution.resolve_and_install(socket_dir, socket_name=socket_name)
     probe = await probe_tmux()
     now = time.time()
@@ -657,6 +682,7 @@ async def attention(
     carried through verbatim from the underlying listing: a rollup over the
     wrong socket is worse than no rollup, so the provenance travels with it.
     """
+    check_quiet_seconds(quiet_seconds)
     listing = await list_sessions(socket_dir=socket_dir, socket_name=socket_name)
     rows = listing["sessions"]
     now = time.time()

@@ -16,8 +16,12 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
 
 1. **One binary, `tmux-fleet`, invocable from a shell on PATH.** Non-interactive:
    a run with stdin closed never hangs. `-h` is a terse human summary; `--help`
-   is the complete listing written for an agent — every verb, its arguments,
-   what it returns, and **which verbs are model-backed**.
+   is the complete listing written for an agent — every verb, its arguments and
+   their types, what it returns, and **which verbs are model-backed**. Both
+   levels exist on every verb too (`tmux-fleet VERB -h`, `tmux-fleet VERB
+   --help`), and neither requires that verb's own arguments. Help is not an
+   error: it goes to stdout and exits 0, and it is the only thing on stdout
+   that is not JSON.
 
 2. **Deterministic verbs** — run correctly with no AI substrate configured at
    all: `socket`, `sessions`, `attention`, `read`, `send`, `create`, `doctor`,
@@ -35,9 +39,11 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
    per-invocation `--confirmed`. The refusal is loud and names the flag. There
    is no session-wide or environment unlock. No verb kills or renames a session.
 
-5. **Structured output.** Success emits one JSON document on stdout. Failure
-   emits a JSON error envelope `{"error": {"code", "message", "remedy"}}` on
-   stdout and exits non-zero. Progress/diagnostics go to stderr, never stdout.
+5. **Structured output.** Every result is JSON: success emits one JSON document
+   on stdout, failure emits a JSON error envelope
+   `{"error": {"code", "message", "remedy"}}` on stdout and exits non-zero.
+   Progress/diagnostics go to stderr, never stdout. Self-description (rule 1)
+   is the one thing on stdout that is not a result.
 
 6. **Sockets are explicit.** Every underlying tmux invocation names its socket;
    ambient `$TMUX` / `TMUX_TMPDIR` are ignored, and `socket` reports what was
@@ -75,6 +81,11 @@ it in a real drumbeat workspace · a worked example. DRAFT until all four.
 
 ## Changelog
 
+- **2026-08-31** — Rule 1 extended: the two-level self-description reaches every
+  verb, and a verb's `--help` does not require that verb's own arguments — an
+  agent asks how to call `read` before it knows it needs a SESSION. Rule 5
+  narrowed from "stdout is JSON" to "every RESULT on stdout is JSON": help is
+  plain text on stdout and exits 0, which the old wording denied.
 - **2026-08-27** — Rule 3 amended with VISION §3: model-backed verbs execute
   through the embedded engine library rather than a PATH-resolved
   amplifier-agent binary; the refusal taxonomy names the missing precondition

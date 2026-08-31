@@ -38,7 +38,10 @@ provider configuration, the `TMUX_FLEET_PROVIDER` pin, and the refusal taxonomy.
 ## Use
 
 ```
+tmux-fleet -h              # terse summary, to remember a verb or a flag name
 tmux-fleet --help          # full, agent-facing listing (names the model-backed verbs)
+tmux-fleet read -h         # the same two levels, narrowed to one verb
+tmux-fleet read --help     # every argument and its type, and what it returns
 tmux-fleet socket          # which socket am I reading, and on whose authority
 tmux-fleet sessions        # every session on the resolved socket, with slivers
 tmux-fleet attention       # triage ORDER: which sessions plausibly want a human
@@ -53,7 +56,8 @@ tmux-fleet create <name> --confirmed                            # fenced create
 
 Every response is one JSON document on stdout. Failures are a JSON error
 envelope (`{"error": {"code", "message", "remedy"}}`) on stdout with a non-zero
-exit; diagnostics go to stderr. The write verbs refuse without `--confirmed`.
+exit; diagnostics go to stderr. Help is the one thing on stdout that is not a
+response: plain text, exit 0. The write verbs refuse without `--confirmed`.
 There is deliberately no verb that kills or renames a session.
 
 ## Library
@@ -67,6 +71,26 @@ from tmux_fleet import list_sessions, triage, manifest
 asyncio.run(list_sessions())
 manifest()  # structured manifest, read from the copy built into the tool
 ```
+
+## Conformance
+
+The smart-tools conformance kit belongs to the spec repo and is read from there,
+never vendored: a copy here would drift from the rules it claims to enforce.
+
+The kit does not install the tool under test, so `tmux-fleet` has to resolve on
+PATH before it runs:
+
+```
+git clone --depth 1 https://github.com/microsoft/amplifier-smart-tools /tmp/amplifier-smart-tools
+uv venv /tmp/tmux-fleet-kit
+uv pip install --python /tmp/tmux-fleet-kit/bin/python -e .
+PATH="/tmp/tmux-fleet-kit/bin:$PATH" \
+  python3 /tmp/amplifier-smart-tools/conformance/run.py . --timeout 60
+```
+
+One JSON verdict document on stdout, a per-rule summary on stderr, exit 0 when
+no rule FAILs. CI runs the same kit against the staged distribution on every
+push.
 
 ## Contributing
 
