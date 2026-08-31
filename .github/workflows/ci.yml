@@ -26,6 +26,11 @@ jobs:
       # Clone the kit outside the checkout, stage the distribution (excluding the
       # dev harness and test suite, which are not part of it), install the tool so
       # its `tmux-fleet` console script resolves, then run the kit.
+      #
+      # `uv run --no-project` starts the kit from the dependencies it declares in
+      # its own inline script metadata. Running it under a bare interpreter would
+      # instead borrow whatever happens to be importable from the environment on
+      # PATH, coupling the kit's dependency set to this tool's.
       - name: Conformance kit against this tool
         run: |
           set -euo pipefail
@@ -39,5 +44,6 @@ jobs:
             --exclude='.git/' --exclude='tests/' \
             --exclude='.venv/' --exclude='.cikit/' --exclude='__pycache__/' \
             ./ "$STAGE/"
-          python3 "$RUNNER_TEMP/amplifier-smart-tools/conformance/run.py" \
+          uv run --no-project \
+            "$RUNNER_TEMP/amplifier-smart-tools/conformance/run.py" \
             "$STAGE" --timeout 60
