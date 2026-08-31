@@ -21,22 +21,23 @@ jobs:
       - name: Tool test suite
         run: uv run --with pytest pytest tests/ -q
 
-      - name: Conformance kit's own tests
-        run: uv run --with pytest pytest conformance/tests/ -q
-
-      # Steering enforcement: run the conformance kit against the tool AS IT SHIPS.
-      # Stage the distribution (excluding the dev harness and test suite, which are
-      # not part of it), install the tool so its `tmux-fleet` console script
-      # resolves, then run the kit.
+      # Steering enforcement: run the canonical conformance kit -- it belongs to
+      # the spec repo and is never vendored here -- against the tool AS IT SHIPS.
+      # Clone the kit outside the checkout, stage the distribution (excluding the
+      # dev harness and test suite, which are not part of it), install the tool so
+      # its `tmux-fleet` console script resolves, then run the kit.
       - name: Conformance kit against this tool
         run: |
           set -euo pipefail
+          git clone --depth 1 https://github.com/microsoft/amplifier-smart-tools \
+            "$RUNNER_TEMP/amplifier-smart-tools"
           uv venv .cikit
           uv pip install --python .cikit/bin/python -e .
           export PATH="$PWD/.cikit/bin:$PATH"
           STAGE="$(mktemp -d)"
           rsync -a \
-            --exclude='conformance/' --exclude='.git/' --exclude='tests/' \
+            --exclude='.git/' --exclude='tests/' \
             --exclude='.venv/' --exclude='.cikit/' --exclude='__pycache__/' \
             ./ "$STAGE/"
-          python3 conformance/run.py "$STAGE" --timeout 60
+          python3 "$RUNNER_TEMP/amplifier-smart-tools/conformance/run.py" \
+            "$STAGE" --timeout 60

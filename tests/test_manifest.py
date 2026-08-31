@@ -31,11 +31,7 @@ _ALLOWED = {
 
 def test_exactly_one_manifest_ships_with_the_tool():
     """One manifest, one copy, beside the code that reads it."""
-    found = [
-        p
-        for p in _REPO_ROOT.rglob("SMART_TOOL.md")
-        if "conformance" not in p.parts and ".git" not in p.parts
-    ]
+    found = [p for p in _REPO_ROOT.rglob("SMART_TOOL.md") if ".git" not in p.parts]
     assert found == [_REPO_ROOT / "src" / "tmux_fleet" / "SMART_TOOL.md"], found
 
 
