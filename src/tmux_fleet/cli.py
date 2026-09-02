@@ -153,7 +153,7 @@ VERBS: list[dict[str, Any]] = [
                 "detail": "How many trailing lines of each session's pane to include as its sliver. Larger values cost one capture per session.",
             }
         ],
-        "returns": "a list of sessions (last_line, tri-state at_prompt, harness, idle, cwd) + counts + a _completeness block",
+        "returns": "a list of sessions (last_line, tri-state at_prompt, harness, idle, recency, cwd) + counts + a _completeness block",
     },
     {
         "name": "attention",
