@@ -93,6 +93,96 @@ def test_sessions_with_unknown_activity_sort_last_by_name(monkeypatch):
     assert ordered == ["known", "mystery-a", "mystery-b"]
 
 
+def test_recency_field_is_present_and_human_readable(monkeypatch):
+    """Sorting is invisible to whoever only reads rendered prose -- the
+    `recency` field is what lets a caller SAY it ('active 2 hours ago')
+    rather than silently benefit from an order it cannot see."""
+    now = 10_000.0
+    monkeypatch.setattr(fleet.time, "time", lambda: now)
+
+    async def fake_enumerate():
+        return (
+            ["fresh", "stale", "unknown-activity"],
+            {"fresh": now - 30, "stale": now - 7200},  # unknown-activity: no entry
+            {},
+            {},
+        )
+
+    monkeypatch.setattr(fleet, "_enumerate_sessions_scoped", fake_enumerate)
+
+    async def scenario():
+        async with make_fleet("anchor") as (_srv, kw):
+            return await fleet.list_sessions(**kw)
+
+    result = run(scenario())
+    by_name = {r["session"]: r for r in result["sessions"]}
+    assert by_name["fresh"]["recency"] == "active just now"
+    assert by_name["stale"]["recency"] == "active 2 hours ago"
+    assert "unknown" in by_name["unknown-activity"]["recency"]
+    assert by_name["unknown-activity"]["idle_seconds"] is None
+
+
+def test_recency_humanizer_never_calls_an_unknown_idle_recent():
+    assert fleet._humanize_recency(None) != "active just now"
+    assert "unknown" in fleet._humanize_recency(None)
+
+
+@pytest.mark.parametrize(
+    "idle_seconds,expected",
+    [
+        (0, "active just now"),
+        (89, "active just now"),
+        (90, "active 2 minutes ago"),
+        (300, "active 5 minutes ago"),
+        (7200, "active 2 hours ago"),
+        (200000, "active 2 days ago"),
+    ],
+)
+def test_recency_humanizer_bounds(idle_seconds, expected):
+    assert fleet._humanize_recency(idle_seconds) == expected
+
+
+def test_attention_tie_within_a_bucket_breaks_by_recency_and_carries_recency_field(
+    monkeypatch,
+):
+    """Two sessions parked at a prompt, both quiet long enough to land in the
+    SAME bucket with the SAME rounded idle_seconds (a tie) -- `zulu` is more
+    recently active than `alpha`, so it must lead `alpha` in the tied
+    candidates, even though `alpha` sorts first alphabetically. Each
+    candidate is the SAME row dict list_sessions() built (attention() only
+    tags it with a bucket), so the `recency` field added there lands here
+    too, with no separate wiring needed."""
+    now = 100_000.0
+    monkeypatch.setattr(fleet.time, "time", lambda: now)
+
+    async def fake_enumerate():
+        # Both round to exactly 2000s idle (a genuine tie on idle_seconds),
+        # but zulu's raw activity timestamp is closer to `now` -- it is the
+        # more recently active of the two.
+        return (
+            ["alpha", "zulu"],
+            {"alpha": now - 2000.4, "zulu": now - 1999.6},
+            {},
+            {},
+        )
+
+    async def fake_capture(session, lines):  # noqa: ARG001 -- signature match
+        return "$ "  # a bare shell prompt -- at_prompt: yes for both
+
+    monkeypatch.setattr(fleet, "_enumerate_sessions_scoped", fake_enumerate)
+    monkeypatch.setattr(fleet, "_capture_pane_scoped", fake_capture)
+
+    async def scenario():
+        async with make_fleet("anchor") as (_srv, kw):
+            return await fleet.attention(quiet_seconds=1, **kw)
+
+    roll = run(scenario())
+    ordered = [c["session"] for c in roll["candidates"]]
+    assert ordered == ["zulu", "alpha"]
+    for row in roll["candidates"]:
+        assert "recency" in row and "ago" in row["recency"]
+
+
 def test_socket_status_reports_running_and_counts():
     async def scenario():
         async with make_fleet("only") as (_srv, kw):

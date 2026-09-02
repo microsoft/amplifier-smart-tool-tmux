@@ -439,6 +439,32 @@ async def _label_sessions_safely(names: list[str]) -> tuple[list[Any], str | Non
 # --------------------------------------------------------------------------
 
 
+def _humanize_recency(idle_seconds: float | None) -> str:
+    """'active just now' / 'active 3 minutes ago' / an honest unknown.
+
+    The recency SORT (above) puts the most recently active session first,
+    but an order is not something a caller reading rendered prose can see --
+    only something they can be told. This is the phrase that lets a caller
+    SAY recency ("alpha, active 3 minutes ago") instead of just silently
+    benefiting from the sort. ``None`` (no activity timestamp this tool
+    could parse) is reported as unknown, never as "just now" -- an unknown
+    recency must not be presented as a recent one.
+    """
+    if idle_seconds is None:
+        return "recency unknown (no activity data for this session)"
+    s = max(0, int(idle_seconds))
+    if s < 90:
+        return "active just now"
+    if s < 5400:
+        minutes = max(1, round(s / 60))
+        return f"active {minutes} minute{'s' if minutes != 1 else ''} ago"
+    if s < 172800:
+        hours = round(s / 3600)
+        return f"active {hours} hour{'s' if hours != 1 else ''} ago"
+    days = round(s / 86400)
+    return f"active {days} day{'s' if days != 1 else ''} ago"
+
+
 async def list_sessions(
     *,
     snapshot_lines: int = LIST_SNAPSHOT_LINES,
@@ -501,6 +527,7 @@ async def list_sessions(
         verdict = classify_prompt(last)
         act = activity.get(name)
         lab = labels.get(name)
+        idle_seconds = round(now - act) if act is not None else None
         rows.append(
             {
                 "session": name,
@@ -510,7 +537,8 @@ async def list_sessions(
                 "harness_evidence_source": lab.source if lab else "none",
                 "harness_evidence": lab.evidence if lab else "not labeled",
                 "last_activity_at": _iso(act),
-                "idle_seconds": (round(now - act) if act is not None else None),
+                "idle_seconds": idle_seconds,
+                "recency": _humanize_recency(idle_seconds),
                 "created_at": _iso(created.get(name)),
                 "cwd": cwds.get(name),
                 "snapshot_readable": bool(text.strip()),
