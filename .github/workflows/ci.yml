@@ -24,8 +24,8 @@ jobs:
       # Steering enforcement: run the canonical conformance kit -- it belongs to
       # the spec repo and is never vendored here -- against the tool AS IT SHIPS.
       # Clone the kit outside the checkout, stage the distribution (excluding the
-      # dev harness and test suite, which are not part of it), install the tool so
-      # its `tmux-fleet` console script resolves, then run the kit.
+      # dev harness and test suite, which are not part of it), build a wheel from
+      # that staged source, install the wheel into a fresh venv, then run the kit.
       #
       # `uv run --no-project` starts the kit from the dependencies it declares in
       # its own inline script metadata. Running it under a bare interpreter would
@@ -36,14 +36,19 @@ jobs:
           set -euo pipefail
           git clone --depth 1 https://github.com/microsoft/amplifier-smart-tools \
             "$RUNNER_TEMP/amplifier-smart-tools"
-          uv venv .cikit
-          uv pip install --python .cikit/bin/python -e .
-          export PATH="$PWD/.cikit/bin:$PATH"
           STAGE="$(mktemp -d)"
           rsync -a \
             --exclude='.git/' --exclude='tests/' \
             --exclude='.venv/' --exclude='.cikit/' --exclude='__pycache__/' \
             ./ "$STAGE/"
+          DIST="$(mktemp -d)"
+          (
+            cd "$STAGE"
+            uv build --wheel --out-dir "$DIST"
+          )
+          uv venv .cikit
+          uv pip install --python .cikit/bin/python "$DIST"/*.whl
+          export PATH="$PWD/.cikit/bin:$PATH"
           uv run --no-project \
             "$RUNNER_TEMP/amplifier-smart-tools/conformance/run.py" \
             "$STAGE" --timeout 60
