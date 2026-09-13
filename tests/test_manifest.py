@@ -58,6 +58,14 @@ def test_version_matches_pyproject_and_package_metadata():
     assert m.version == tmux_fleet.__version__
 
 
+def test_source_checkout_version_fallback_matches_pyproject():
+    """A source-only import reports the same release version as a wheel."""
+    pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text())
+    pyproject_version = pyproject["project"]["version"]
+    package_init = (_REPO_ROOT / "src" / "tmux_fleet" / "__init__.py").read_text()
+    assert f'__version__ = "{pyproject_version}"' in package_init
+
+
 def test_requires_shape_and_installs_are_doc_references():
     m = manifest_mod.manifest()
     by_name = {r.name: r for r in m.requires}

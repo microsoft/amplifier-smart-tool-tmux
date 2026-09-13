@@ -21,7 +21,16 @@ See `docs/VISION.md` and `contracts/cli.v1.md` for the governing design.
 uv tool install git+<this repo>
 ```
 
-The engine ships as a regular dependency — you get it automatically. To use the
+### Source release
+
+After the `v0.2.1` source tag is available, install that exact source release:
+
+```
+uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux@v0.2.1
+```
+
+Its regular dependencies include `tmux-kit>=0.6.0`; uv resolves and installs
+that dependency automatically. To use the
 model-backed verbs you additionally install the extra for your provider's SDK
 and supply that provider's credentials from your environment (the tool stores
 none):
