@@ -26,8 +26,10 @@ from tmux_fleet.fleet import (
     socket_status,
 )
 
-# The manifest accessor (spec: reachable from the library as structured data).
+# The manifest accessor (spec: reachable from the library as structured data)
+# and the skill `--help` renders from it.
 from tmux_fleet.manifest import Manifest, ManifestError, manifest, manifest_dict
+from tmux_fleet.skill import skill
 
 # Model-backed verbs and their substrate.
 from tmux_fleet.agent import AgentError, AgentUnavailable
@@ -60,4 +62,5 @@ __all__ = [
     "manifest_dict",
     "Manifest",
     "ManifestError",
+    "skill",
 ]

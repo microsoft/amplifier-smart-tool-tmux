@@ -46,6 +46,9 @@ dev = ["pytest>=8"]
 anthropic = ["anthropic"]
 openai = ["openai"]
 
+[project.urls]
+Repository = "https://github.com/microsoft/amplifier-smart-tool-tmux"
+
 [project.scripts]
 tmux-fleet = "tmux_fleet.cli:main"
 
