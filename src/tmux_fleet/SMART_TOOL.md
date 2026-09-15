@@ -40,18 +40,18 @@ requires:
     install: docs/installing-amplifier-agent.md
 ---
 
-# tmux-fleet
-
-A smart tool for tmux fleets. One library, one thin `tmux-fleet` CLI.
+A smart tool for tmux fleets. One library, one thin `tmux-fleet` CLI. Every verb is
+reachable from `tmux_fleet` as a Python function; the CLI parses arguments, calls the
+library, and prints the result.
 
 ## When to reach for it
 
 - A machine is running many tmux sessions and you need to know, quickly, which
   ones are parked at a prompt, which finished, and which need a human.
 - You want a model-backed triage over the whole fleet (`triage`) or an
-  interpretation of one session's output (`interpret`) — without attaching.
+  interpretation of one session's output (`interpret`) without attaching.
 - You need to deliver one keystroke or one command into a session, or start a
-  new detached session, *safely* — every write refuses without `--confirmed`
+  new detached session, safely: every write refuses without `--confirmed`
   and is recorded in an append-only audit log.
 
 ## What it is deliberately bad at
@@ -66,6 +66,25 @@ A smart tool for tmux fleets. One library, one thin `tmux-fleet` CLI.
 - **Finding sessions on another socket.** Every verb reads exactly ONE resolved
   socket and says which. It does not auto-detect the ambient `TMUX_TMPDIR`. If a
   fleet looks empty, run `socket` first.
+
+## Install
+
+```
+uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux
+```
+
+`tmux` must be on PATH; every verb is a tmux client. The model-backed verbs also need
+a provider SDK, installed as an extra (`tmux-fleet[anthropic]` or `tmux-fleet[openai]`),
+and that provider's credentials in the environment. `doctor` reports what this host
+has and what is missing.
+
+## Model-backed verbs
+
+`triage` and `interpret` run a single model turn through the amplifier-agent engine,
+embedded in-process. They consume tokens and may answer differently on a second run.
+Invoked without a usable substrate (provider SDK extra, provider configuration, or
+credentials) they fail naming exactly which precondition is missing, never falling
+back to a deterministic guess. Every other verb runs with nothing configured.
 
 ## Worked invocations
 
@@ -82,7 +101,15 @@ tmux-fleet send work --text 'make test' --submit --confirmed   # fenced write
 tmux-fleet create scratch --confirmed --command 'htop'         # fenced create
 ```
 
+## Output and failure contract
+
 Every response is a single JSON document on stdout. Failures are a JSON error
-envelope (`{"error": {"code", "message", "remedy"}}`) with a non-zero exit;
-diagnostics go to stderr. `--help` lists every verb and names the model-backed
-ones. There is deliberately no verb that kills or renames a session.
+envelope (`{"error": {"code", "message", "remedy"}}`) with a non-zero exit: `2`
+refused (deny-by-default write, unknown session, bad argument), `1` read or agent
+failure. Diagnostics go to stderr. There is deliberately no verb that kills or
+renames a session.
+
+## Reading more
+
+The repository's `docs/installing-tmux.md` and `docs/installing-amplifier-agent.md`
+cover the prerequisites; `contracts/cli.v1.md` is the frozen invocation surface.

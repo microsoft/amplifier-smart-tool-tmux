@@ -16,12 +16,14 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
 
 1. **One binary, `tmux-fleet`, invocable from a shell on PATH.** Non-interactive:
    a run with stdin closed never hangs. `-h` is a terse human summary; `--help`
-   is the complete listing written for an agent — every verb, its arguments and
-   their types, what it returns, and **which verbs are model-backed**. Both
-   levels exist on every verb too (`tmux-fleet VERB -h`, `tmux-fleet VERB
-   --help`), and neither requires that verb's own arguments. Help is not an
-   error: it goes to stdout and exits 0, and it is the only thing on stdout
-   that is not JSON.
+   is the tool's skill, written for an agent in the shape of an Agent Skill:
+   the manifest body, then every verb on one line, **marked deterministic or
+   model-backed**, pointing at `tmux-fleet VERB --help`. Both levels exist on
+   every verb too (`tmux-fleet VERB -h` is terse; `tmux-fleet VERB --help` is
+   the complete listing: arguments and their types, what it returns, whether it
+   is model-backed), and neither requires that verb's own arguments. Help is
+   not an error: it goes to stdout and exits 0, and it is the only thing on
+   stdout that is not JSON.
 
 2. **Deterministic verbs** — run correctly with no AI substrate configured at
    all: `socket`, `sessions`, `attention`, `read`, `send`, `create`, `doctor`,
@@ -81,6 +83,10 @@ it in a real drumbeat workspace · a worked example. DRAFT until all four.
 
 ## Changelog
 
+- **2026-09-15** - Rule 1 amended to the upstream spec: top-level `--help` is
+  the tool's skill (manifest body plus a generated verb list) rather than a
+  complete listing. The complete per-verb listing is unchanged and remains
+  where the arguments, types, and returns live.
 - **2026-08-31** — Rule 1 extended: the two-level self-description reaches every
   verb, and a verb's `--help` does not require that verb's own arguments — an
   agent asks how to call `read` before it knows it needs a SESSION. Rule 5

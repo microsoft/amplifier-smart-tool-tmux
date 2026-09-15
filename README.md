@@ -48,7 +48,7 @@ provider configuration, the `TMUX_FLEET_PROVIDER` pin, and the refusal taxonomy.
 
 ```
 tmux-fleet -h              # terse summary, to remember a verb or a flag name
-tmux-fleet --help          # full, agent-facing listing (names the model-backed verbs)
+tmux-fleet --help          # the tool's skill, for an agent: guidance plus every verb
 tmux-fleet read -h         # the same two levels, narrowed to one verb
 tmux-fleet read --help     # every argument and its type, and what it returns
 tmux-fleet socket          # which socket am I reading, and on whose authority
