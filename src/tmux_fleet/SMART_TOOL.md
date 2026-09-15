@@ -42,7 +42,9 @@ requires:
 
 A smart tool for tmux fleets. One library, one thin `tmux-fleet` CLI. Every verb is
 reachable from `tmux_fleet` as a Python function; the CLI parses arguments, calls the
-library, and prints the result.
+library, and prints the result. To chain verbs, or combine them with other smart tools,
+write a script against the libraries and pass return values between calls rather than
+piping CLI output.
 
 ## When to reach for it
 
