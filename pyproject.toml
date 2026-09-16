@@ -1,6 +1,6 @@
 [project]
 name = "tmux-fleet"
-version = "0.2.1"
+version = "0.2.2"
 description = "A smart tool for tmux fleets: observe every session on a machine, and — only under explicit per-invocation confirmation — type into one or start one. Deterministic paths run with nothing configured; smart paths (triage, interpret) bring model-backed judgment through the embedded amplifier-agent engine."
 readme = "README.md"
 # amplifier-agent (the embedded engine) requires >=3.12; the floor is set to
@@ -10,12 +10,12 @@ license = { text = "MIT" }
 dependencies = [
     # tmux-kit is the PLUMBING (sockets, spawning, capture, input, the
     # isolated-server test harness). A DEPENDENCY, never vendored. Pinned to a
-    # RELEASED floor from PyPI (>=0.6.0), NOT a git commit -- application judgment
+    # floor supporting native buffered paste (>=0.8.0), NOT a git commit -- application judgment
     # (harness classification, triage, interpretation) lives here; mechanism
     # improvements flow upstream as PRs. Harness classification was re-homed
     # into this library (tmux_kit.labels was deleted upstream in 0.3.4 as app
     # policy) -- see tmux_fleet/harness.py.
-    "tmux-kit>=0.6.0",
+    "tmux-kit>=0.8.0",
     # amplifier-agent is the AI substrate, EMBEDDED (VISION section 3): the
     # smart verbs import its engine LIBRARY (amplifier_agent_lib) in-process and
     # take a single turn -- no CLI subprocess, no wrapper SDK, no PATH-resolved

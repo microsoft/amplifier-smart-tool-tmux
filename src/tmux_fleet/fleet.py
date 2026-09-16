@@ -362,34 +362,39 @@ async def _capture_pane_scoped(session: str, lines: int) -> str:
     rather than '' so "nothing to see" and "capture failed" stay distinct.
     """
     try:
-        # capture-pane's -t is a target-PANE and rejects the '=session'
-        # exact-match form on tmux 3.4; list-panes DOES honor '=session'.
-        # Resolve the active pane's immutable %id, then capture that pane.
-        panes = await run_tmux_scoped(
-            "list-panes",
-            "-t",
-            f"={session}",
-            "-F",
-            "#{pane_active}\t#{pane_id}",
-        )
-        pane_rows = [ln for ln in panes.splitlines() if ln.strip()]
-        if not pane_rows:
-            return _PANE_CAPTURE_UNAVAILABLE
-        chosen = next((ln for ln in pane_rows if ln.startswith("1\t")), pane_rows[0])
-        pane_id = chosen.split("\t", 1)[1].strip() if "\t" in chosen else ""
-        if not pane_id.startswith("%"):
-            return _PANE_CAPTURE_UNAVAILABLE
-        return await run_tmux_scoped(
-            "capture-pane",
-            "-e",  # preserve ANSI escapes; strip_ansi() removes them later
-            "-p",
-            "-t",
-            pane_id,
-            "-S",
-            f"-{lines}",
+        return await _capture_pane_id_scoped(
+            await _resolve_active_pane_id(session), lines
         )
     except RuntimeError:
         return _PANE_CAPTURE_UNAVAILABLE
+
+
+async def _resolve_active_pane_id(session: str) -> str:
+    """Resolve *session*'s active pane once to its immutable ``%pane-id``."""
+    panes = await run_tmux_scoped(
+        "list-panes", "-t", f"={session}", "-F", "#{pane_active}\t#{pane_id}"
+    )
+    pane_rows = [ln for ln in panes.splitlines() if ln.strip()]
+    chosen = next((ln for ln in pane_rows if ln.startswith("1\t")), None)
+    pane_id = chosen.split("\t", 1)[1].strip() if chosen and "\t" in chosen else ""
+    if not pane_id.startswith("%"):
+        raise RuntimeError(
+            f"tmux did not return an active %pane-id for exact session {session!r}"
+        )
+    return pane_id
+
+
+async def _capture_pane_id_scoped(pane_id: str, lines: int) -> str:
+    """Capture one already-resolved immutable pane ID through the pinned socket."""
+    return await run_tmux_scoped(
+        "capture-pane",
+        "-e",  # preserve ANSI escapes; strip_ansi() removes them later
+        "-p",
+        "-t",
+        pane_id,
+        "-S",
+        f"-{lines}",
+    )
 
 
 async def _capture_pane_metadata_scoped(session: str) -> tuple[int, int, int]:
@@ -906,6 +911,7 @@ async def send_input(
     *,
     text: str | None = None,
     key: str | None = None,
+    paste: bool = False,
     submit: bool = False,
     confirmed: bool = False,
     socket_dir: str | None = None,
@@ -919,9 +925,12 @@ async def send_input(
 
     Two shapes:
 
-    * **raw keystrokes** (default) -- ``--text`` types and does not submit
-      unless the text itself carries a newline. This is what a caller wants when
-      filling a field it is not ready to send.
+    * **literal text** (default) -- ``--text`` types one newline-free value and
+      does not submit. This is for a field the caller is not ready to send.
+    * **buffered paste** (``paste=True``) -- sends the complete, unchanged text
+      to tmux-kit's native paste primitive. The caller explicitly selects a
+      target that supports bracketed paste; tmux only wraps when that target has
+      enabled bracketed-paste mode.
     * **a command** (``submit=True``) -- types *text* and submits it with
       exactly ONE Enter, in ONE call. A relayed command must never sit ARMED
       while the owner is told it was sent.
@@ -979,6 +988,22 @@ async def send_input(
             "input line."
         )
 
+    if paste and key is not None:
+        _audit(
+            {
+                "action": "send",
+                "session": session,
+                "outcome": "refused",
+                "reason": "--paste with --key",
+                "key": key,
+            }
+        )
+        raise FleetError(
+            "REFUSED: --paste applies to --text, not --key. Select exactly one "
+            "input shape: use --text --paste for buffered text, or --key for "
+            "one named keystroke."
+        )
+
     if text is not None:
         encoded = text.encode("utf-8")
         if len(encoded) > tk_keys.MAX_TEXT_BYTES:
@@ -995,29 +1020,21 @@ async def send_input(
                 f"REFUSED: {len(encoded)} bytes exceeds the "
                 f"{tk_keys.MAX_TEXT_BYTES}-byte cap on a single send."
             )
-        # Each newline becomes its own `send-keys Enter` subprocess, so the
-        # newline count is a fork count. Counted BEFORE the cap so a
-        # capped-plus-one send cannot half-submit a multi-line send.
-        if submit:
-            _, _interior = submission.split_for_submission(text.rstrip("\r\n"))
-            _enters = _interior + 1
-        else:
-            _, _enters = submission.split_for_submission(text)
-        if _enters > submission.MAX_SUBMIT_KEYS:
+        if not paste and ("\r" in text or "\n" in text):
             _audit(
                 {
                     "action": "send",
                     "session": session,
                     "outcome": "refused",
-                    "reason": "over MAX_SUBMIT_KEYS",
-                    "newlines": _enters,
+                    "reason": "multiline --text without --paste",
+                    "bytes": len(encoded),
                 }
             )
             raise FleetError(
-                f"REFUSED: {_enters} newlines exceeds the "
-                f"{submission.MAX_SUBMIT_KEYS}-Enter cap on a single send. Each "
-                "newline is delivered as a real Enter key event (one tmux call "
-                "each), so an unbounded count is a fork amplifier. Split the send."
+                "REFUSED: --text containing CR or LF is multiline data, not "
+                "Enter key events. Nothing was delivered. Select a "
+                "bracketed-paste-supporting target and re-run with --paste; "
+                "use --submit only when one additional Enter is authorized."
             )
     else:
         assert key is not None
@@ -1077,18 +1094,21 @@ async def send_input(
             "prefix-match into a session you did not name."
         )
 
-    # A newline inside --text is NOT sent as a byte (LF, which a raw-mode TUI
-    # reads as Ctrl+J and silently drops). Each newline is delivered as its own
-    # Enter KEY EVENT (CR), which is what a real keypress produces.
+    if paste:
+        assert text is not None
+        return await _paste_input(
+            session, text, submit=submit, resolution=resolution, probe=probe
+        )
+
     before_line = last_nonblank_line(await _read_pane_text(session))
 
     if text is not None:
+        # CR/LF text was refused above. Default --text remains one literal tmux
+        # input operation; --submit adds its one, separate key event.
+        argvs = [tk_keys.build_send_text_argv(session, text)] if text else []
         if submit:
-            argvs, interior = submission.build_send_argvs(session, text.rstrip("\r\n"))
             argvs.append(tk_keys.build_send_key_argv(session, "Enter"))
-            enter_count = interior + 1
-        else:
-            argvs, enter_count = submission.build_send_argvs(session, text)
+        enter_count = int(submit)
     else:
         assert key is not None
         argvs = [tk_keys.build_send_key_argv(session, key)]
@@ -1164,9 +1184,189 @@ async def send_input(
     }
 
 
-async def _read_pane_text(session: str) -> str:
+async def _paste_text(pane_id: str, text: str, *, socket_path: str) -> None:
+    """Call tmux-kit's native buffered-paste primitive without reimplementing it."""
+    try:
+        from tmux_kit.paste import paste_text
+    except ImportError as exc:  # pragma: no cover - only stale environments
+        raise FleetError(
+            "tmux-kit>=0.8.0 is required for --paste; install the declared "
+            "dependency before selecting buffered paste."
+        ) from exc
+    await paste_text(pane_id, text, socket_path=socket_path)
+
+
+async def _paste_input(
+    session: str,
+    text: str,
+    *,
+    submit: bool,
+    resolution: SocketResolution,
+    probe: Probe,
+) -> dict[str, Any]:
+    """Paste unchanged multiline data into one pinned pane, then optionally Enter."""
+    pane_id: str | None = None
+    paste_called = False
+    enter_called = False
+    phase = "resolving the session's active pane"
+    try:
+        pane_id = await _resolve_active_pane_id(session)
+        phase = "reading the pinned pane before paste"
+        before_text = await _read_pane_text(pane_id=pane_id)
+        phase = "delivering the native buffered paste"
+        paste_called = True
+        await _paste_text(pane_id, text, socket_path=resolution.server_socket_path)
+    except ValueError as exc:
+        _audit(
+            {
+                "action": "send",
+                "session": session,
+                "outcome": "refused",
+                "reason": "tmux-kit paste validation",
+                "paste": True,
+                "pane_id": pane_id,
+            }
+        )
+        raise FleetError(
+            f"REFUSED: tmux-kit rejected the --paste input: {exc}. Nothing was "
+            "delivered; correct the text or select a target that supports "
+            "bracketed paste."
+        ) from exc
+    except Exception as exc:  # no retry after an uncertain write boundary
+        _audit(
+            {
+                "action": "send",
+                "session": session,
+                "outcome": "uncertain",
+                "reason": f"paste failed while {phase}",
+                "paste": True,
+                "pane_id": pane_id,
+                "paste_called": paste_called,
+                "enter_called": enter_called,
+                "submit_requested": submit,
+                "socket_dir": resolution.socket_dir,
+                "server_socket_path": resolution.server_socket_path,
+            }
+        )
+        if isinstance(exc, FleetError):
+            raise
+        raise FleetError(
+            f"paste delivery is uncertain: {phase} failed with "
+            f"{type(exc).__name__}: {exc}. Read the session before reporting "
+            "the result or attempting any further input; do not retry the "
+            "payload automatically."
+        ) from exc
+
+    try:
+        phase = "reading the pinned pane after paste"
+        after_paste = await _read_pane_text(pane_id=pane_id)
+        if submit:
+            phase = "delivering the additional Enter"
+            enter_called = True
+            # The pane ID is pinned above: an active-pane switch cannot receive this.
+            await run_tmux_scoped(*tk_keys.build_send_key_argv(pane_id, "Enter"))
+        phase = "reading the pinned pane after submission"
+        settled_text = await _read_pane_text(pane_id=pane_id)
+    except Exception as exc:  # no retry after the paste has been delivered
+        _audit(
+            {
+                "action": "send",
+                "session": session,
+                "outcome": "uncertain",
+                "reason": f"paste failed while {phase}",
+                "paste": True,
+                "pane_id": pane_id,
+                "paste_called": paste_called,
+                "enter_called": enter_called,
+                "submit_requested": submit,
+                "socket_dir": resolution.socket_dir,
+                "server_socket_path": resolution.server_socket_path,
+            }
+        )
+        raise FleetError(
+            f"paste delivery is uncertain: {phase} failed with "
+            f"{type(exc).__name__}: {exc}. Read the session before reporting "
+            "the result or attempting any further input; do not retry the "
+            "payload automatically."
+        ) from exc
+
+    assert pane_id is not None
+    enter_count = int(submit)
+    outcome = submission.OUTCOME_UNCERTAIN if submit else submission.OUTCOME_ARMED
+    _audit(
+        {
+            "action": "send",
+            "session": session,
+            "outcome": "delivered",
+            "preview": tk_keys.redact_preview(text),
+            "paste": True,
+            "pane_id": pane_id,
+            "enter_key_events": enter_count,
+            "submitted": bool(submit),
+            "submission_outcome": outcome,
+            "submission_confirmed": False,
+            "submit_requested": submit,
+            "socket_dir": resolution.socket_dir,
+            "server_socket_path": resolution.server_socket_path,
+        }
+    )
+    if submit:
+        note = (
+            "OUTCOME: UNCERTAIN. The unchanged text was delivered through "
+            "tmux-kit's native buffered paste and exactly one additional Enter "
+            "key event was delivered to the same pinned pane. Read the session "
+            "before reporting it as submitted; do not paste the payload again."
+        )
+    else:
+        note = (
+            "OUTCOME: ARMED, NOT SUBMITTED. The unchanged text was delivered "
+            "through tmux-kit's native buffered paste and no Enter key event "
+            "was generated. Read the session; if it is correct and submission "
+            "is authorized, send `--key Enter` without pasting the payload "
+            "again. tmux wraps the paste only when the selected target enabled "
+            "bracketed paste; --paste is not a universal safe transaction."
+        )
+    return {
+        "socket": socket_resolution.describe(
+            resolution, tmux_reported_socket_path=probe.socket_path
+        ),
+        "session": session,
+        "pane_id": pane_id,
+        "outcome": outcome,
+        "delivered": True,
+        "submitted": bool(submit),
+        "enter_key_events": enter_count,
+        "submission_confirmed": False,
+        "submit_requested": submit,
+        "sent": {"text": text, "paste": True},
+        "readback": {
+            "input_line_before": last_nonblank_line(before_text),
+            "input_line_after_paste": last_nonblank_line(after_paste),
+            "input_line_after": last_nonblank_line(settled_text),
+            "method": (
+                "The session's active pane was resolved once to this immutable "
+                "%pane-id before paste. All readback and any additional Enter "
+                "use that same pane ID; multiline paste is application data, "
+                "so this does not infer application-level consumption."
+            ),
+        },
+        "audit_log": str(audit_log_path()),
+        "settled_last_line": last_nonblank_line(settled_text),
+        "note": note,
+    }
+
+
+async def _read_pane_text(
+    session: str | None = None, *, pane_id: str | None = None
+) -> str:
     """One scoped pane capture, ANSI stripped, '' when unavailable."""
-    raw = await _capture_pane_scoped(session, LIST_SNAPSHOT_LINES)
+    if (session is None) == (pane_id is None):
+        raise ValueError("pass exactly one of session or pane_id")
+    raw = (
+        await _capture_pane_scoped(session, LIST_SNAPSHOT_LINES)
+        if session is not None
+        else await _capture_pane_id_scoped(pane_id, LIST_SNAPSHOT_LINES)
+    )
     return "" if raw == _PANE_CAPTURE_UNAVAILABLE else strip_ansi(raw)
 
 

@@ -167,7 +167,7 @@ VERBS: list[dict[str, Any]] = [
                 "type": "str",
                 "default": None,
                 "short": "literal text to type (one of --text/--key)",
-                "detail": "Literal text typed into the pane. Exactly one of --text or --key is required. Nothing is submitted unless --submit is also given.",
+                "detail": "Literal text typed into the pane. Exactly one of --text or --key is required. CR/LF text refuses unless --paste explicitly selects native buffered paste. Nothing is submitted unless --submit is also given.",
             },
             {
                 "label": "--key KEY",
@@ -178,12 +178,20 @@ VERBS: list[dict[str, Any]] = [
                 "detail": "A tmux key name (e.g. C-c, Enter, Escape) sent as a keystroke rather than as text. Exactly one of --text or --key is required.",
             },
             {
+                "label": "--paste",
+                "usage": "[--paste]",
+                "type": "flag",
+                "default": "false (CR/LF text refuses)",
+                "short": "use native buffered paste for --text",
+                "detail": "Deliver the complete unchanged --text through tmux-kit's native buffered paste primitive. Choose it only for a bracketed-paste-supporting target: tmux wraps only when that application enabled bracketed paste, so this is not universal transaction safety. Cannot be combined with --key.",
+            },
+            {
                 "label": "--submit",
                 "usage": "[--submit]",
                 "type": "flag",
                 "default": "false (the text is left armed at the prompt)",
                 "short": "press Enter after the text",
-                "detail": "Submit the typed text. Without it the text is left armed at the prompt and the outcome reports 'armed'.",
+                "detail": "Submit the typed text with exactly one additional Enter key event. Without it no Enter is generated and the outcome reports 'armed'.",
             },
             {
                 "label": "--confirmed",

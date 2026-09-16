@@ -299,6 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
     group = p_send.add_mutually_exclusive_group(required=True)
     group.add_argument("--text")
     group.add_argument("--key")
+    p_send.add_argument("--paste", action="store_true")
     p_send.add_argument("--submit", action="store_true")
     p_send.add_argument("--confirmed", action="store_true")
 
@@ -367,6 +368,7 @@ async def _dispatch(args: argparse.Namespace) -> dict[str, Any]:
             args.session,
             text=args.text,
             key=args.key,
+            paste=args.paste,
             submit=args.submit,
             confirmed=args.confirmed,
             socket_dir=args.socket_dir,

@@ -1,7 +1,7 @@
 ---
 smart_tool_format: 1
 name: tmux-fleet
-version: 0.2.1
+version: 0.2.2
 description: >
   Tells you what is happening across every tmux session on a machine — which are
   parked at a prompt, which finished and how, which need a human — and, only
@@ -100,6 +100,7 @@ tmux-fleet interpret work         # [model-backed] what this session's output me
 tmux-fleet doctor                 # preflight: tmux present, socket resolvable/writable
 tmux-fleet exit-code build        # tmux-native exit status of a finished session
 tmux-fleet send work --text 'make test' --submit --confirmed   # fenced write
+tmux-fleet send work --text $'line one\nline two\n' --paste --confirmed # buffered paste
 tmux-fleet create scratch --confirmed --command 'htop'         # fenced create
 ```
 
@@ -110,6 +111,13 @@ envelope (`{"error": {"code", "message", "remedy"}}`) with a non-zero exit: `2`
 refused (deny-by-default write, unknown session, bad argument), `1` read or agent
 failure. Diagnostics go to stderr. There is deliberately no verb that kills or
 renames a session.
+
+`send --text` refuses CR/LF data by default so it cannot synthesize interior
+Enter events. For a target that supports bracketed paste, add `--paste` to
+deliver the exact unchanged text through tmux-kit's native buffered paste; it
+generates no Enter. `--submit` adds exactly one Enter event. tmux only wraps
+the paste when the target enabled bracketed-paste mode, so `--paste` is the
+caller's explicit target selection, not universal transaction safety.
 
 ## Reading more
 

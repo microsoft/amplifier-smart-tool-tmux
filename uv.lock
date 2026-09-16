@@ -848,7 +848,7 @@ wheels = [
 
 [[package]]
 name = "tmux-fleet"
-version = "0.2.1"
+version = "0.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "amplifier-agent" },
@@ -874,17 +874,17 @@ requires-dist = [
     { name = "openai", marker = "extra == 'openai'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "tmux-kit", specifier = ">=0.6.0" },
+    { name = "tmux-kit", specifier = ">=0.8.0" },
 ]
 provides-extras = ["dev", "anthropic", "openai"]
 
 [[package]]
 name = "tmux-kit"
-version = "0.6.0"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ff/a3/d2122cc7b0f89e70a6ad09b40a47668c1e7fbcb3c685d9747b57c5ad40b1/tmux_kit-0.6.0.tar.gz", hash = "sha256:c62415a49c62f5b6a84a2f844ced2715fe110777b5a60a27721a5a81dacc3391", size = 159145, upload-time = "2026-09-13T17:30:00.933Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/5b/2f5a23480d6572713d0138788d69254b533e2b2538f12cafc354198977ca/tmux_kit-0.8.0.tar.gz", hash = "sha256:498334dbc021e5ae47830b32b7cdb7dfeb474379cfe8bd558ac4ddcefd2f51ee", size = 172244, upload-time = "2026-09-16T16:56:58.827Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/7f/d07e42166d36dac03d7f24339ca25d4293344626c8c206f8aa021b47b20d/tmux_kit-0.6.0-py3-none-any.whl", hash = "sha256:1eb4897c36c4e95a863244133a157013faadf30ef818bddbf1108a5e7fe469c4", size = 92313, upload-time = "2026-09-13T17:29:59.738Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/6c/d57f706ddd16d14c82f4af2c9d01bdd8898303988749b8c9aebfb9183c7d/tmux_kit-0.8.0-py3-none-any.whl", hash = "sha256:376a0ae2d1a206c7f05a8d201fdce95b6c634adc93859eafc106fd3ea600f417", size = 98521, upload-time = "2026-09-16T16:56:57.114Z" },
 ]
 
 [[package]]
