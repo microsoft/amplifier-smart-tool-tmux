@@ -5,23 +5,23 @@ from __future__ import annotations
 from tmux_fleet import submission as S
 
 
-def test_split_counts_enters():
-    assert S.split_for_submission("echo x") == (["echo x"], 0)
-    segs, n = S.split_for_submission("a\nb\nc")
+def test_legacy_create_command_sequence_counts_enters():
+    assert S.split_command_sequence("echo x") == (["echo x"], 0)
+    segs, n = S.split_command_sequence("a\nb\nc")
     assert segs == ["a", "b", "c"] and n == 2
     # CRLF is one submission, not two
-    _, n = S.split_for_submission("a\r\nb")
+    _, n = S.split_command_sequence("a\r\nb")
     assert n == 1
 
 
-def test_build_send_argvs_no_newline_is_non_submitting():
-    argvs, enters = S.build_send_argvs("sess", "echo hi")
+def test_create_command_sequence_no_newline_is_non_submitting():
+    argvs, enters = S.build_command_sequence_argvs("sess", "echo hi")
     assert enters == 0
     assert len(argvs) == 1  # one literal send, no Enter
 
 
-def test_build_send_argvs_newline_becomes_enter_key_event():
-    argvs, enters = S.build_send_argvs("sess", "a\nb")
+def test_create_command_sequence_newline_becomes_enter_key_event():
+    argvs, enters = S.build_command_sequence_argvs("sess", "a\nb")
     assert enters == 1
     # text, Enter, text -> the middle argv is a real Enter key event
     joined = [" ".join(a) for a in argvs]

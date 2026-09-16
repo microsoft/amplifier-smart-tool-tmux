@@ -420,6 +420,6 @@ def _tool_version() -> str:
         try:
             return version("tmux-fleet")
         except PackageNotFoundError:
-            return "0.2.1"
+            return "0.2.2"
     except Exception:  # noqa: BLE001 - clientInfo version is cosmetic
-        return "0.2.1"
+        return "0.2.2"

@@ -47,6 +47,32 @@ def test_send_fence_is_refused_exit_2_json_only(capsys):
     assert "--confirmed" in payload["error"]["message"]
 
 
+def test_send_paste_with_key_is_refused_exit_2_json_only(capsys):
+    rc = cli.main(
+        ["send", "alpha", "--key", "Enter", "--paste", "--confirmed"]
+    )
+    assert rc == 2
+    payload, _ = _stdout_json(capsys)
+    assert payload["error"]["code"] == "refused"
+    assert "--paste applies to --text" in payload["error"]["message"]
+
+
+def test_send_cli_forwards_paste_to_library(monkeypatch, capsys):
+    received = {}
+
+    async def fake_send(session, **kwargs):
+        received["session"] = session
+        received.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(cli.fleet, "send_input", fake_send)
+    assert cli.main(["send", "alpha", "--text", "line", "--paste", "--confirmed"]) == 0
+    payload, _ = _stdout_json(capsys)
+    assert payload == {"ok": True}
+    assert received["session"] == "alpha"
+    assert received["paste"] is True
+
+
 def test_read_no_server_is_error_exit_1(capsys):
     rc = cli.main(["read", "x", "--socket-dir", _NO_SOCKET])
     assert rc == 1

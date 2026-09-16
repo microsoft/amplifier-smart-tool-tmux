@@ -1,4 +1,4 @@
-"""Making submission REAL: newlines become Enter KEY EVENTS, never bytes.
+"""Submission outcomes and the legacy create-command sequence.
 
 WHY THIS MODULE EXISTS
 ----------------------
@@ -23,16 +23,16 @@ In raw mode LF is Ctrl+J and is swallowed. No error, no diff. The text just
 sits in the input box looking sent -- and does not politely vanish: it PREFIXES
 the next thing typed, fusing two commands into one nonsense command.
 
-THE FIX
--------
-Every newline in the text becomes a distinct ``send-keys -t <sess> Enter`` -- a
-real key event, the same one a human keypress produces -- instead of a literal
-byte inside the paste payload. CR is strictly more faithful than LF for BOTH
-target classes: it is what pressing the key actually emits, and a shell's line
-discipline converts it to LF on the way in anyway.
+SEND'S BOUNDARY
+---------------
+``send --text`` is singular literal typing. It refuses CR/LF text rather than
+turning data into Enter key events. A caller that deliberately selected a
+bracketed-paste-supporting target uses ``paste=True``; the native buffered-paste
+mechanism belongs to tmux-kit and lives in ``fleet.send_input``.
 
-This module is pure argv construction: no I/O, so the property that matters is
-auditable at a glance and testable without tmux.
+The command-sequence helper below remains only for ``create --command``. That
+older API deliberately interprets interior newlines as a shell command sequence;
+it is not the behavior of ``send``.
 """
 
 from __future__ import annotations
@@ -52,8 +52,8 @@ _NEWLINE = re.compile(r"\r\n|\r|\n")
 MAX_SUBMIT_KEYS = tk_keys.MAX_KEYS
 
 
-def split_for_submission(text: str) -> tuple[list[str], int]:
-    """Split *text* into literal segments and count the Enters between them.
+def split_command_sequence(text: str) -> tuple[list[str], int]:
+    """Split a create-command sequence and count its separating Enters.
 
     Returns ``(segments, enter_count)`` where ``len(segments) == enter_count +
     1`` always. Text with no newline yields one segment and zero Enters -- which
@@ -64,14 +64,14 @@ def split_for_submission(text: str) -> tuple[list[str], int]:
     return segments, len(segments) - 1
 
 
-def build_send_argvs(session: str, text: str) -> tuple[list[list[str]], int]:
-    """Build the ordered tmux argvs that type *text* and really submit it.
+def build_command_sequence_argvs(session: str, text: str) -> tuple[list[list[str]], int]:
+    """Build the legacy create-command argvs, where newlines are command Enters.
 
     Literal runs go through ``send-keys -l -- <segment>`` (argv, never a shell
     string; ``--`` keeps a leading ``-`` as data). Each newline becomes its own
     ``send-keys -t <session> Enter``. An empty segment contributes no argv.
     """
-    segments, enters = split_for_submission(text)
+    segments, enters = split_command_sequence(text)
     argvs: list[list[str]] = []
     last = len(segments) - 1
     for i, segment in enumerate(segments):
@@ -190,8 +190,9 @@ def outcome_note(outcome: str, *, submit: bool) -> str:
             "OUTCOME: ARMED, NOT SUBMITTED. Nothing was executed by this call. "
             "The text was typed and is sitting unsubmitted on the target's "
             "input line, where it will PREFIX whatever is typed next. Do NOT "
-            "report this as sent. Re-send with --submit (one call: types the "
-            "text and submits it), or send `--key Enter`."
+            "report this as sent. Read the session, then, if the text is "
+            "correct and submission is authorized, send `--key Enter` -- do "
+            "not type the payload again."
         )
     return (
         "OUTCOME: UNCERTAIN. An Enter key event was delivered, but the readback "
@@ -226,8 +227,8 @@ def submission_note(*, enter_count: int, key: str | None = None) -> str:
     return (
         " NOTHING WAS SUBMITTED by this call: the text was typed but no Enter "
         "key event was sent, so it is sitting unsubmitted in the target's input "
-        "buffer. Send `--key Enter` (or include a newline in --text, which is "
-        "now delivered as a real Enter key) to submit it. Unsubmitted text does "
-        "not vanish -- it PREFIXES whatever is typed next, fusing two commands "
-        "into one."
+        "buffer. Read the session; if the text is correct and submission is "
+        "authorized, send `--key Enter` without typing the payload again. "
+        "Unsubmitted text does not vanish -- it PREFIXES whatever is typed "
+        "next, fusing two commands into one."
     )

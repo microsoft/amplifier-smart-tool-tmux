@@ -23,13 +23,13 @@ uv tool install git+<this repo>
 
 ### Source release
 
-After the `v0.2.1` source tag is available, install that exact source release:
+After the `v0.2.2` source tag is available, install that exact source release:
 
 ```
-uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux@v0.2.1
+uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux@v0.2.2
 ```
 
-Its regular dependencies include `tmux-kit>=0.6.0`; uv resolves and installs
+Its regular dependencies include `tmux-kit>=0.8.0`; uv resolves and installs
 that dependency automatically. To use the
 model-backed verbs you additionally install the extra for your provider's SDK
 and supply that provider's credentials from your environment (the tool stores
@@ -60,6 +60,7 @@ tmux-fleet exit-code <name># tmux-native exit status of a finished session
 tmux-fleet triage          # [model-backed] fleet-wide: what needs attention and why
 tmux-fleet interpret <name># [model-backed] what this session's state/output means
 tmux-fleet send <name> --text 'echo hi' --submit --confirmed   # fenced write
+tmux-fleet send <name> --text $'first line\nsecond line\n' --paste --confirmed
 tmux-fleet create <name> --confirmed                            # fenced create
 ```
 
@@ -68,6 +69,15 @@ envelope (`{"error": {"code", "message", "remedy"}}`) on stdout with a non-zero
 exit; diagnostics go to stderr. Help is the one thing on stdout that is not a
 response: plain text, exit 0. The write verbs refuse without `--confirmed`.
 There is deliberately no verb that kills or renames a session.
+
+`send --text` defaults to one literal newline-free value: CR/LF text refuses
+before any input is delivered. For a target that supports bracketed paste, add
+`--paste`; it passes the unchanged text to tmux-kit's native buffered paste
+primitive and generates no Enter events. `--submit` then adds exactly one
+Enter. tmux wraps a paste only when the selected application enabled bracketed
+paste, so `--paste` is an explicit target selection, not universal transaction
+safety. After an armed paste, read it back and, only if authorized, send
+`--key Enter`; never paste the same payload again.
 
 ## Library
 

@@ -597,11 +597,13 @@ async def create_session(
                     "run: it exceeds the single-send byte cap."
                 )
             else:
-                # Same submission discipline as `send`: any newline INSIDE the
-                # command is an Enter key event too, not a literal LF byte. A
-                # trailing newline is stripped first so the submit stays exactly
-                # ONE Enter.
-                argvs, _ = submission.build_send_argvs(name, command.rstrip("\r\n"))
+                # create --command retains its older command-sequence semantics:
+                # interior newlines are real shell Enters. `send --text` does
+                # NOT share this helper; it refuses multiline text unless the
+                # caller explicitly chooses native buffered paste.
+                argvs, _ = submission.build_command_sequence_argvs(
+                    name, command.rstrip("\r\n")
+                )
                 for argv in argvs:
                     await run_tmux_scoped(*argv)
                 await run_tmux_scoped(*tk_keys.build_send_key_argv(name, "Enter"))

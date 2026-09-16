@@ -68,6 +68,58 @@ def test_send_submit_with_key_is_refused():
     assert "--submit applies to --text" in msg
 
 
+def test_send_paste_with_key_is_refused_and_audited_before_contact(monkeypatch):
+    contacted = False
+
+    async def unexpected_contact(*args: str) -> str:
+        nonlocal contacted
+        contacted = True
+        raise AssertionError("invalid --paste --key must not contact tmux")
+
+    monkeypatch.setattr(fleet, "run_tmux_scoped", unexpected_contact)
+    with pytest.raises(fleet.FleetError) as ei:
+        run(fleet.send_input("alpha", key="Enter", paste=True, confirmed=True))
+
+    msg = str(ei.value)
+    assert "--paste applies to --text" in msg
+    assert contacted is False
+    recs = _audit_records()
+    assert any(
+        r.get("action") == "send"
+        and r.get("outcome") == "refused"
+        and r.get("reason") == "--paste with --key"
+        for r in recs
+    )
+
+
+def test_multiline_text_without_paste_refuses_before_input(monkeypatch):
+    input_operations: list[tuple[str, ...]] = []
+
+    async def unexpected_input(*args: str) -> str:
+        input_operations.append(args)
+        raise AssertionError("multiline refusal must not contact tmux")
+
+    monkeypatch.setattr(fleet, "run_tmux_scoped", unexpected_input)
+
+    with pytest.raises(fleet.FleetError) as ei:
+        run(
+            fleet.send_input(
+                "alpha", text="first\r\nsecond\n", confirmed=True, submit=True
+            )
+        )
+
+    assert "Nothing was delivered" in str(ei.value)
+    assert "--paste" in str(ei.value)
+    assert input_operations == []
+    recs = _audit_records()
+    assert any(
+        r.get("action") == "send"
+        and r.get("outcome") == "refused"
+        and r.get("reason") == "multiline --text without --paste"
+        for r in recs
+    )
+
+
 def test_create_without_confirmed_refuses_and_audits():
     async def scenario():
         async with make_fleet() as (_srv, kw):
