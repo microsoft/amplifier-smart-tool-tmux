@@ -131,6 +131,15 @@ def test_unknown_dispatch_is_durable_and_blocks_new_input_until_reviewed(tmp_pat
             assert (
                 await library.input(pane["id"], rid(), "text", "new", confirmed=True)
             )["status"] == "refused"
+            for _ in range(35):
+                await library.authorize_input(pane["id"], rid(), confirmed=True)
+            current = await library.state()
+            assert args["request_id"] not in {
+                row["request_id"] for row in current["operations"]
+            }
+            assert [row["request_id"] for row in current["unresolved_inputs"]] == [
+                args["request_id"]
+            ]
             await library.close()
             reopened = TerminalFleet(tmp_path, **kw, allow_input=True)
             assert (await reopened.operation(args["request_id"]))["status"] == "unknown"

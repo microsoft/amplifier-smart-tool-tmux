@@ -85,6 +85,7 @@ class TerminalFleet:
         self.db.executescript("""
           CREATE TABLE IF NOT EXISTS records(kind TEXT, id TEXT, data TEXT NOT NULL, PRIMARY KEY(kind,id));
           CREATE TABLE IF NOT EXISTS operations(id TEXT PRIMARY KEY, digest TEXT NOT NULL, data TEXT NOT NULL);
+          CREATE INDEX IF NOT EXISTS operations_status ON operations(json_extract(data, '$.status'));
         """)
         for path in self.storage.glob("terminals.sqlite3*"):
             os.chmod(path, 0o600)
@@ -119,7 +120,9 @@ class TerminalFleet:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return
-            for row in self.db.execute("SELECT id,data FROM operations").fetchall():
+            for row in self.db.execute(
+                "SELECT id,data FROM operations WHERE json_extract(data, '$.status')='running'"
+            ).fetchall():
                 receipt = json.loads(row["data"])
                 if receipt["status"] == "running":
                     receipt.update(
@@ -349,6 +352,17 @@ class TerminalFleet:
             "complete_history": False,
         }
 
+    def _unresolved_inputs(self, target_id=None):
+        query = """SELECT data FROM operations
+                   WHERE json_extract(data, '$.status')='unknown'
+                   AND json_extract(data, '$.action')='input'
+                   AND json_extract(data, '$.reviewed_at') IS NULL"""
+        args = ()
+        if target_id is not None:
+            query += " AND json_extract(data, '$.target_id')=?"
+            args = (target_id,)
+        return [json.loads(row[0]) for row in self.db.execute(query, args)]
+
     async def state(self):
         """Read retained shared selection/drafts/grants and recent receipts, without output bytes."""
         self._recover()
@@ -380,6 +394,7 @@ class TerminalFleet:
             "view": view,
             "grants": grants,
             "operations": receipts,
+            "unresolved_inputs": self._unresolved_inputs(),
             "draft_is_authority": False,
             "model_usage": {"calls": 0, "cost": 0},
         }
@@ -608,19 +623,11 @@ class TerminalFleet:
                     "This host has not enabled terminal input.",
                 )
             row = await self._target(target_id)
-            previous = [
-                json.loads(r[0]) for r in self.db.execute("SELECT data FROM operations")
-            ]
-            if any(
-                r["action"] == "input"
-                and r.get("target_id") == target_id
-                and r["status"] == "unknown"
-                and not r.get("reviewed_at")
-                for r in previous
-            ):
+            previous = self._unresolved_inputs(target_id)
+            if previous:
                 raise TerminalError(
                     "UNCERTAIN_INPUT",
-                    "Inspect and acknowledge the earlier unknown input outcome before new input.",
+                    f"Review unknown receipt {previous[0]['request_id']} and inspect the terminal before new input.",
                 )
             if not isinstance(value, str) or type(submit) is not bool:
                 raise TerminalError(

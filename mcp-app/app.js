@@ -261,7 +261,7 @@ async function refresh({ fleet = false } = {}) {
       state = { ...next, view: state.view };
     }
     if (!pending) {
-      const unknown = state.operations.find(
+      const unknown = (state.unresolved_inputs || state.operations).find(
         (row) =>
           row.action === "input" &&
           row.target_id === targetId &&
