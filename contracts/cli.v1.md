@@ -39,7 +39,9 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
 
 4. **Writes are fenced.** `send` and `create` refuse without an explicit
    per-invocation `--confirmed`. The refusal is loud and names the flag. There
-   is no session-wide or environment unlock. No verb kills or renames a session.
+   is no session-wide or environment unlock. The original verbs do not kill or
+   rename sessions. Additive management lives in the optional terminal surface
+   with its own explicit authority contract.
 
 5. **Structured output.** Every result is JSON: success emits one JSON document
    on stdout, failure emits a JSON error envelope
@@ -55,7 +57,8 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
 
 Promotion trigger: a real consumer demonstrates the need; amend here first.
 
-- MCP server surface.
+- MCP server surface is promoted as the optional `terminal.v1.md` contract;
+  the original CLI remains compatible.
 - Watch/streaming/progress for long smart calls (tracks the upstream spec's
   open ROADMAP question — we expect to hit it first and feed evidence back).
 - Scrollback `search`/`page` verbs (tmux-kit has them; no consumer asked yet).

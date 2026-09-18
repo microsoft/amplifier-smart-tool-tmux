@@ -1,7 +1,7 @@
 ---
 smart_tool_format: 1
 name: tmux-fleet
-version: 0.2.2
+version: 0.3.0
 description: >
   Tells you what is happening across every tmux session on a machine — which are
   parked at a prompt, which finished and how, which need a human — and, only
@@ -123,3 +123,16 @@ caller's explicit target selection, not universal transaction safety.
 
 The repository's `docs/installing-tmux.md` and `docs/installing-amplifier-agent.md`
 cover the prerequisites; `contracts/cli.v1.md` is the frozen invocation surface.
+
+## Optional collaborative terminals
+
+`TerminalFleet` is a socket-bound public library for exact pane discovery, bounded
+observations, retained views/drafts and durable input/management receipts. It makes
+no model calls. `tmux-fleet-terminal --help` exposes its deterministic JSON adapter.
+Install `[mcp]` and run `tmux-fleet-mcp --storage /private/path --socket-dir /tmp`
+for typed MCP tools and an optional self-contained terminal App. Input and management
+are disabled unless the launching host supplies `--allow-input` / `--allow-management`.
+Management still needs per-action confirmation; interactive input needs a confirmed
+exact-pane grant with expiry/byte limits. Every input has a stable request ID: inspect
+its receipt on timeout, never retype blindly. Closing the App leaves tmux work running.
+See `contracts/terminal.v1.md` and `docs/collaborative-terminals.md` for scope and limits.

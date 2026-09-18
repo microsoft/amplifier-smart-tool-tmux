@@ -15,6 +15,7 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 
 # Deterministic verbs (the eight cli.v1 core verbs, plus their helpers).
+from tmux_fleet.terminal import TerminalFleet, TerminalError
 from tmux_fleet.creation import create_session
 from tmux_fleet.diagnostics import doctor, exit_code
 from tmux_fleet.fleet import (
@@ -38,10 +39,12 @@ from tmux_fleet.smart import interpret, triage
 try:
     __version__ = _pkg_version("tmux-fleet")
 except PackageNotFoundError:  # pragma: no cover - source checkout without metadata
-    __version__ = "0.2.2"
+    __version__ = "0.3.0"
 
 __all__ = [
     "__version__",
+    "TerminalFleet",
+    "TerminalError",
     # deterministic verbs
     "socket_status",
     "list_sessions",

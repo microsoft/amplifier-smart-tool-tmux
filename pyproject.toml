@@ -1,6 +1,6 @@
 [project]
 name = "tmux-fleet"
-version = "0.2.2"
+version = "0.3.0"
 description = "A smart tool for tmux fleets: observe every session on a machine, and — only under explicit per-invocation confirmation — type into one or start one. Deterministic paths run with nothing configured; smart paths (triage, interpret) bring model-backed judgment through the embedded amplifier-agent engine."
 readme = "README.md"
 # amplifier-agent (the embedded engine) requires >=3.12; the floor is set to
@@ -35,7 +35,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "playwright>=1.50"]
+mcp = ["mcp>=2.2,<3"]
 # Provider SDKs are OPTIONAL EXTRAS, not core dependencies: the engine
 # dynamically imports a provider's SDK only when a smart verb actually runs a
 # turn through that provider. Install the extra matching the provider whose
@@ -51,6 +52,8 @@ Repository = "https://github.com/microsoft/amplifier-smart-tool-tmux"
 
 [project.scripts]
 tmux-fleet = "tmux_fleet.cli:main"
+tmux-fleet-terminal = "tmux_fleet.terminal_cli:main"
+tmux-fleet-mcp = "tmux_fleet.mcp:main"
 
 [build-system]
 requires = ["hatchling"]

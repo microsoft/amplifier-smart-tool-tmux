@@ -1,0 +1,338 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>tmux fleet</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font: 14px system-ui;
+        --bg: var(--color-background-primary, light-dark(#fff, #17191e));
+        --fg: var(--color-text-primary, light-dark(#242933, #eceef3));
+        --muted: var(--color-text-secondary, light-dark(#626a78, #a6adba));
+        --border: var(--color-border-primary, light-dark(#dfe3eb, #3a414d));
+        --soft: var(--color-background-secondary, light-dark(#f4f6fa, #242831));
+        background: var(--bg);
+        color: var(--fg);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        padding: 14px;
+        overflow-x: hidden;
+      }
+      header,
+      .row,
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      header {
+        justify-content: space-between;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0;
+      }
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+        color: inherit;
+        background: var(--soft);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 8px 10px;
+        min-height: 36px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      button.primary {
+        background: light-dark(#365bd9, #7494ff);
+        color: light-dark(white, #101629);
+      }
+      button.danger {
+        color: light-dark(#a52238, #ff9caf);
+      }
+      label {
+        display: block;
+        font-size: 12px;
+        color: var(--muted);
+        margin: 10px 0 4px;
+      }
+      label.check {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin: 0;
+      }
+      label.check input {
+        min-height: 0;
+      }
+      select,
+      input:not([type="checkbox"]),
+      textarea {
+        min-width: 0;
+        width: 100%;
+      }
+      .row > div {
+        flex: 1;
+        min-width: 150px;
+      }
+      .caption {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.5;
+      }
+      #notice {
+        min-height: 20px;
+        font-size: 12px;
+        padding: 8px 0;
+        color: light-dark(#216c4b, #9adebb);
+      }
+      #notice.error {
+        color: light-dark(#a52238, #ff9caf);
+      }
+      #identity {
+        overflow-wrap: anywhere;
+        margin: 5px 0;
+        font:
+          11px ui-monospace,
+          monospace;
+        color: var(--muted);
+      }
+      #terminal-shell {
+        width: 100%;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--bg);
+        padding: 8px;
+        max-height: 65vh;
+        min-height: 160px;
+      }
+      #terminal {
+        width: max-content;
+        min-width: 100%;
+        min-height: 160px;
+      }
+      #terminal-shell:focus-within {
+        outline: 2px solid light-dark(#365bd9, #7494ff);
+        outline-offset: 2px;
+      }
+      #terminal.readonly {
+        opacity: 0.9;
+      }
+      #draft {
+        resize: vertical;
+        min-height: 70px;
+        max-height: 180px;
+        margin-bottom: 7px;
+      }
+      #writable {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      details {
+        border-top: 1px solid var(--border);
+        margin-top: 14px;
+        padding-top: 12px;
+      }
+      summary {
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 13px;
+      }
+      #receipts {
+        padding: 0;
+        list-style: none;
+        font-size: 12px;
+        max-height: 200px;
+        overflow: auto;
+      }
+      #receipts li {
+        padding: 7px 0;
+        border-bottom: 1px solid var(--border);
+        overflow-wrap: anywhere;
+      }
+      #receipts code {
+        font-size: 10px;
+      }
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible {
+        outline: 2px solid light-dark(#365bd9, #7494ff);
+        outline-offset: 2px;
+      }
+      .spacer {
+        flex: 1;
+      }
+      .compact {
+        max-width: 240px;
+      }
+      #transport {
+        margin: 8px 0;
+      }
+      #scope {
+        overflow-wrap: anywhere;
+      }
+      .keybar button {
+        min-width: 42px;
+      }
+      #search {
+        max-width: 190px;
+      }
+      .actions {
+        margin-top: 9px;
+      }
+      .manage-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px 12px;
+      }
+      @media (max-width: 480px) {
+        body {
+          padding: 10px;
+        }
+        .manage-grid {
+          grid-template-columns: 1fr;
+        }
+        .row > div {
+          min-width: 120px;
+        }
+        #terminal-shell {
+          max-height: 52vh;
+        }
+        .keybar {
+          gap: 5px;
+        }
+        .keybar button {
+          padding: 7px;
+        }
+        header .caption {
+          display: none;
+        }
+      }
+    </style>
+    <!-- XTERM_CSS -->
+  </head>
+  <body>
+    <header>
+      <h1>tmux fleet</h1>
+      <span class="caption">Shared terminals · no model calls</span
+      ><button id="refresh">Refresh fleet</button>
+    </header>
+    <p id="scope" class="caption">Connecting to the configured socket…</p>
+    <div class="row">
+      <div>
+        <label for="filter">Find session, window or pane</label
+        ><input id="filter" type="search" placeholder="Filter names…" />
+      </div>
+      <div>
+        <label for="pane">Terminal pane</label
+        ><select id="pane">
+          <option value="">Choose a pane</option>
+        </select>
+      </div>
+    </div>
+    <p id="identity">No pane selected</p>
+    <div class="row">
+      <button id="enable" class="primary">Enable typing · 5 min / 32 KiB</button
+      ><button id="readonly">Read only</button
+      ><span id="writable">Read only</span><span class="spacer"></span
+      ><button id="detach">Detach view</button>
+    </div>
+    <div id="notice" role="status" aria-live="polite">Connecting…</div>
+    <div id="terminal-shell">
+      <div id="terminal" class="readonly" aria-label="Terminal output"></div>
+    </div>
+    <p id="transport" class="caption">
+      Opening a view never takes keyboard authority or resizes another client.
+    </p>
+    <div class="row keybar">
+      <button data-key="Escape">Esc</button><button data-key="Tab">Tab</button
+      ><button data-key="Up">↑</button><button data-key="Down">↓</button
+      ><button data-key="Enter">Enter</button
+      ><button data-key="C-c">Ctrl C</button
+      ><button id="fit">Fit tmux window</button
+      ><button id="copy">Copy selection</button
+      ><input
+        id="search"
+        type="search"
+        aria-label="Find terminal text"
+        placeholder="Find in terminal…"
+      /><button id="find">Find</button>
+    </div>
+    <label for="draft">Shared input draft</label
+    ><textarea
+      id="draft"
+      placeholder="Draft text with the agent. Drafting never sends it."
+    ></textarea>
+    <div class="row">
+      <button id="type">Type draft</button
+      ><button id="paste" class="primary">Paste draft</button
+      ><label class="check"
+        ><input id="submit" type="checkbox" />Add Enter after paste</label
+      ><button id="inspect" hidden>Inspect uncertain receipt</button
+      ><button id="reviewed" hidden>Outcome reviewed · allow new input</button>
+    </div>
+    <details>
+      <summary>Manage sessions and panes</summary>
+      <p class="caption">
+        These actions affect running work. Close and resize are explicit shared
+        terminal effects.
+      </p>
+      <div class="manage-grid">
+        <div>
+          <label for="manage-action">Action</label
+          ><select id="manage-action">
+            <option value="create_session">Create session</option>
+            <option value="create_window">Create window</option>
+            <option value="split_horizontal">Split side by side</option>
+            <option value="split_vertical">Split above/below</option>
+            <option value="rename_session">Rename session</option>
+            <option value="rename_window">Rename window</option>
+            <option value="close_pane">Close this pane</option>
+            <option value="close_window">Close this window</option>
+            <option value="close_session">Close this session</option>
+          </select>
+        </div>
+        <div>
+          <label for="name">Name</label
+          ><input id="name" placeholder="my-work" />
+        </div>
+        <div>
+          <label for="cwd">Working directory (optional)</label
+          ><input id="cwd" placeholder="/absolute/path" />
+        </div>
+      </div>
+      <div class="actions">
+        <label class="check"
+          ><input id="confirm-manage" type="checkbox" />Confirm this action on
+          the selected scope</label
+        ><button id="manage">Apply management action</button>
+      </div>
+    </details>
+    <details>
+      <summary>Recent action receipts</summary>
+      <p class="caption">
+        Delivered input is not proof of command success. Unknown outcomes are
+        never replayed.
+      </p>
+      <ul id="receipts"></ul>
+    </details>
+    <!-- APP_SCRIPT -->
+  </body>
+</html>

@@ -18,8 +18,16 @@ jobs:
       - name: Install tmux (the tool is a tmux client; deterministic verbs need it)
         run: sudo apt-get update && sudo apt-get install -y tmux
 
-      - name: Tool test suite
-        run: uv run --with pytest pytest tests/ -q
+      - name: Build and verify the packaged terminal App
+        run: |
+          npm ci --prefix mcp-app
+          npm run build --prefix mcp-app
+          git diff --exit-code -- src/tmux_fleet/resources
+
+      - name: Tool and independent MCP App test suite
+        run: |
+          uv run --extra dev --extra mcp playwright install --with-deps chromium
+          uv run --extra dev --extra mcp pytest tests/ -q
 
       # Steering enforcement: run the canonical conformance kit -- it belongs to
       # the spec repo and is never vendored here -- against the tool AS IT SHIPS.
@@ -39,7 +47,7 @@ jobs:
           STAGE="$(mktemp -d)"
           rsync -a \
             --exclude='.git/' --exclude='tests/' \
-            --exclude='.venv/' --exclude='.cikit/' --exclude='__pycache__/' \
+            --exclude='.venv/' --exclude='.cikit/' --exclude='__pycache__/' --exclude='node_modules/' \
             ./ "$STAGE/"
           DIST="$(mktemp -d)"
           (

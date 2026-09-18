@@ -409,8 +409,8 @@ def describe(
     if tmux_reported_socket_path is None:
         confirmed = None
     else:
-        confirmed = _normalize(tmux_reported_socket_path) == _normalize(
-            resolution.server_socket_path
+        confirmed = os.path.realpath(_normalize(tmux_reported_socket_path)) == os.path.realpath(
+            _normalize(resolution.server_socket_path)
         )
 
     block: dict[str, Any] = {
