@@ -66,8 +66,8 @@ Reads are safe by construction. The write verbs (`send`, `create`) refuse
 without an explicit per-invocation confirmation; every attempt — refused or
 delivered — lands in an append-only audit log. The optional collaborative terminal
 library adds explicitly confirmed management (create, split, rename, close and
-resize) and expiring, byte-bounded input grants
-for an exact pane. Host configuration opts into those effects; legacy CLI write
+resize) and input grants for one exact pane, either for an attachment's lifetime
+or bounded by expiry and byte allowance. Host configuration opts into those effects; legacy CLI write
 confirmation remains unchanged. Closing a view never closes the underlying work.
 See `contracts/terminal.v1.md` for exact identities, durable receipts and authority.
 Every tmux invocation names its socket explicitly; ambient `$TMUX`/`TMUX_TMPDIR` are ignored and reported, never

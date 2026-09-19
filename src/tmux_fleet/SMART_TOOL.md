@@ -1,7 +1,7 @@
 ---
 smart_tool_format: 1
 name: tmux-fleet
-version: 0.3.0
+version: 0.3.1
 description: >
   Tells you what is happening across every tmux session on a machine — which are
   parked at a prompt, which finished and how, which need a human — and, only

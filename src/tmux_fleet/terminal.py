@@ -90,6 +90,7 @@ class TerminalFleet:
         for path in self.storage.glob("terminals.sqlite3*"):
             os.chmod(path, 0o600)
         self.lock_path = self.storage / "operations.lock"
+        self.backend_id = uuid.uuid4().hex
         self.streams = {}
         self.stream_lock = asyncio.Lock()
         self.sweeper = None
@@ -168,27 +169,35 @@ class TerminalFleet:
             15,
         )
 
+    def _socket_info(self):
+        info = Path(self.socket).stat()
+        if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
+            raise TerminalError(
+                "SOCKET_SCOPE",
+                "The configured tmux socket is not owned by the current account.",
+            )
+        return info
+
+    def _server_identity(self, info, values):
+        if len(values) != 2 or not all(value.isdecimal() for value in values):
+            raise ValueError("Invalid server identity")
+        stamp = f"{self.socket}:{info.st_dev}:{info.st_ino}:{values}"
+        return {
+            "id": hashlib.sha256(stamp.encode()).hexdigest(),
+            "pid": values[0],
+            "started": values[1],
+            "socket_identity": [info.st_dev, info.st_ino],
+        }
+
     async def _epoch(self):
         try:
-            info = Path(self.socket).stat()
-            if not stat.S_ISSOCK(info.st_mode) or info.st_uid != os.getuid():
-                raise TerminalError(
-                    "SOCKET_SCOPE",
-                    "The configured tmux socket is not owned by the current account.",
-                )
+            info = self._socket_info()
             values = (
                 (await self._run("display-message", "-p", "#{pid}|#{start_time}"))
                 .strip()
                 .split("|")
             )
-            if len(values) != 2 or not all(value.isdecimal() for value in values):
-                raise ValueError("Invalid server identity")
-            stamp = f"{self.socket}:{info.st_dev}:{info.st_ino}:{values}"
-            return {
-                "id": hashlib.sha256(stamp.encode()).hexdigest(),
-                "pid": values[0],
-                "started": values[1],
-            }
+            return self._server_identity(info, values)
         except (OSError, RuntimeError) as error:
             raise TerminalError(
                 "SERVER_UNAVAILABLE",
@@ -273,32 +282,37 @@ class TerminalFleet:
             "scope": "Only this configured socket; ambient TMUX/TMUX_TMPDIR are ignored.",
         }
 
-    async def _target(self, target_id):
+    def _saved_target(self, target_id):
         row = self._get("target", target_id)
         if not row or row["socket"] != self.socket:
             raise TerminalError(
                 "UNKNOWN_TARGET", "Choose a pane from this socket’s fleet first."
             )
-        if await self._epoch() != row["server"]:
-            raise TerminalError(
-                "STALE_TARGET",
-                "This pane belongs to an earlier tmux server incarnation.",
-            )
+        return row
+
+    async def _target(self, target_id):
+        row = self._saved_target(target_id)
         try:
+            info = self._socket_info()
             current = (
                 await self._run(
                     "display-message",
                     "-p",
                     "-t",
                     row["pane_id"],
-                    "#{session_id}|#{window_id}|#{pane_id}",
+                    "#{pid}|#{start_time}|#{session_id}|#{window_id}|#{pane_id}",
                 )
-            ).strip()
-        except RuntimeError as error:
+            ).strip().split("|")
+        except (OSError, RuntimeError) as error:
             raise TerminalError(
                 "STALE_TARGET", "The exact pane is no longer available."
             ) from error
-        if current != "|".join(
+        if self._server_identity(info, current[:2])["id"] != row["server"]["id"]:
+            raise TerminalError(
+                "STALE_TARGET",
+                "This pane belongs to an earlier tmux server incarnation.",
+            )
+        if "|".join(current[2:]) != "|".join(
             row[key] for key in ("session_id", "window_id", "pane_id")
         ):
             raise TerminalError(
@@ -334,6 +348,26 @@ class TerminalFleet:
                 "STALE_TARGET", "The exact pane changed before the operation could run."
             )
         return value
+
+    def _attachment_available(self, attachment_id, target_id):
+        attachment = self._get("attachment", attachment_id)
+        return bool(
+            attachment
+            and not attachment.get("closed")
+            and attachment["target_id"] == target_id
+        )
+
+    def _grant_available(self, grant, charge=1):
+        if not grant or grant.get("revoked") or not self.allow_input:
+            return False
+        if grant.get("scope") == "attachment":
+            return (
+                grant.get("backend_id") == self.backend_id
+                and self._attachment_available(
+                    grant["attachment_id"], grant["target_id"]
+                )
+            )
+        return grant["expires_at"] > time.time() and grant["remaining_bytes"] >= charge
 
     async def capture(self, target_id, lines=200):
         """Read bounded text for reasoning. Observations are never input authority."""
@@ -378,15 +412,19 @@ class TerminalFleet:
                 "SELECT data FROM operations ORDER BY rowid DESC LIMIT 30"
             )
         ]
-        grants = [
-            {
-                **grant,
-                "active": grant["expires_at"] > time.time()
-                and grant["remaining_bytes"] > 0
-                and not grant.get("revoked"),
-            }
-            for grant in self._all("grant")
-        ]
+        grants, live_targets = [], {}
+        for grant in self._all("grant"):
+            active = self._grant_available(grant)
+            target_id = grant["target_id"]
+            if active and target_id not in live_targets:
+                try:
+                    await self._target(target_id)
+                    live_targets[target_id] = True
+                except TerminalError:
+                    live_targets[target_id] = False
+            grants.append(
+                {**grant, "active": active and live_targets.get(target_id, False)}
+            )
         return {
             "socket": self.socket,
             "allow_input": self.allow_input,
@@ -558,8 +596,14 @@ class TerminalFleet:
         seconds=300,
         max_bytes=32768,
         actor="unspecified",
+        attachment_id=None,
     ):
-        """Explicit bounded input authority for one pane; confirmation is caller-reported."""
+        """Confirm input authority for one exact pane.
+
+        With attachment_id, authority lasts until detach, revoke or backend restart;
+        expires_at and remaining_bytes are null. Otherwise seconds/max_bytes bound
+        the grant. Confirmation is caller-reported under the host's input policy.
+        """
 
         async def work(effect):
             if not self.allow_input or confirmed is not True:
@@ -570,22 +614,36 @@ class TerminalFleet:
             await self._target(target_id)
             bounded(seconds, 1, 900, "seconds")
             bounded(max_bytes, 1, 65536, "max_bytes")
+            if attachment_id is not None:
+                stream = self.streams.get(attachment_id)
+                if (
+                    not self._attachment_available(attachment_id, target_id)
+                    or not stream
+                    or stream.closed
+                ):
+                    raise TerminalError(
+                        "ATTACHMENT_CLOSED",
+                        "Open a live viewer for this exact pane before enabling attachment typing.",
+                    )
             grant = {
                 "id": uuid.uuid4().hex,
                 "target_id": target_id,
-                "expires_at": time.time() + seconds,
-                "remaining_bytes": max_bytes,
+                "scope": "attachment" if attachment_id is not None else "bounded",
+                "expires_at": None
+                if attachment_id is not None
+                else time.time() + seconds,
+                "remaining_bytes": None if attachment_id is not None else max_bytes,
                 "actor_reported": actor,
             }
+            if attachment_id is not None:
+                grant.update(attachment_id=attachment_id, backend_id=self.backend_id)
             self._put("grant", grant["id"], grant)
             return grant
 
-        return await self._operate(
-            "authorize_input",
-            request_id,
-            locals_without(locals(), "self", "work"),
-            work,
-        )
+        payload = locals_without(locals(), "self", "work")
+        if attachment_id is None:
+            payload.pop("attachment_id")
+        return await self._operate("authorize_input", request_id, payload, work)
 
     async def revoke_input(self, grant_id):
         """Revoke a retained input grant immediately; no terminal effect."""
@@ -668,22 +726,20 @@ class TerminalFleet:
             if grant_id:
                 grant = self._get("grant", grant_id)
                 if (
-                    not grant
+                    not self._grant_available(grant, charge)
                     or grant["target_id"] != target_id
-                    or grant.get("revoked")
-                    or grant["expires_at"] <= time.time()
-                    or grant["remaining_bytes"] < charge
                 ):
                     raise TerminalError(
                         "GRANT_EXPIRED",
-                        "The exact-pane input grant is unavailable, expired or exhausted.",
+                        "The exact-pane input grant is unavailable, detached, expired or exhausted.",
                     )
-                grant["remaining_bytes"] -= charge
-                self._put("grant", grant_id, grant)
+                if grant["remaining_bytes"] is not None:
+                    grant["remaining_bytes"] -= charge
+                    self._put("grant", grant_id, grant)
             elif confirmed is not True:
                 raise TerminalError(
                     "INPUT_AUTHORITY_REQUIRED",
-                    "Confirm this input or obtain an exact-pane bounded grant.",
+                    "Confirm this input or obtain an exact-pane input grant.",
                 )
             if kind == "paste":
                 buffer = "tmux-fleet-" + uuid.uuid4().hex
@@ -986,7 +1042,24 @@ class TerminalFleet:
                 "ATTACHMENT_CLOSED",
                 "This viewer was detached. Open a new viewer; no input is replayed.",
             )
-        row = await self._target(attachment["target_id"])
+        row = self._saved_target(attachment["target_id"])
+        stream = self.streams.get(attachment_id)
+        socket_identity = row["server"].get("socket_identity")
+        if stream and not stream.closed and socket_identity is not None:
+            try:
+                info = self._socket_info()
+                same_socket = socket_identity == [info.st_dev, info.st_ino]
+            except OSError:
+                same_socket = False
+            if not same_socket:
+                raise TerminalError(
+                    "STALE_TARGET",
+                    "This pane belongs to an earlier tmux server incarnation.",
+                )
+            # read() checks server/session/window/pane on the owned connection.
+            # Do not launch a tmux subprocess on every resource poll.
+        else:
+            row = await self._target(attachment["target_id"])
         stream = await self._open_stream(attachment_id, row, retained=True)
         return await stream.read(cursor)
 

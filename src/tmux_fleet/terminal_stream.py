@@ -155,22 +155,25 @@ class ControlStream:
             if match[1] == self.identity:
                 start = int(match[2])
         reset = start is None or start < self.base or start > self.offset
-        geometry = (
-            (
-                await self.library._guarded(
-                    self.target,
-                    [
-                        "display-message",
-                        "-p",
-                        "-t",
-                        self.target["pane_id"],
-                        "#{pane_width}|#{pane_height}|#{cursor_x}|#{cursor_y}|#{cursor_flag}|#{alternate_on}",
-                    ],
-                )
-            )
-            .strip()
-            .split("|")
+        geometry_bytes, _ = await self._command(
+            [
+                "display-message",
+                "-p",
+                "-t",
+                self.target["pane_id"],
+                "#{pid}|#{start_time}|#{session_id}|#{window_id}|#{pane_id}|#{pane_width}|#{pane_height}|#{cursor_x}|#{cursor_y}|#{cursor_flag}|#{alternate_on}",
+            ]
         )
+        fields = geometry_bytes.decode().strip().split("|")
+        expected = [self.target["server"]["pid"], self.target["server"]["started"]]
+        expected += [
+            self.target[key] for key in ("session_id", "window_id", "pane_id")
+        ]
+        if fields[:5] != expected:
+            raise TerminalError(
+                "STALE_TARGET", "The exact pane changed before the view could be read."
+            )
+        geometry = fields[5:]
         if len(geometry) != 6 or not all(v.isdecimal() for v in geometry):
             raise TerminalError("INVALID_SNAPSHOT", "Terminal geometry is unavailable.")
         cols, rows, x, y, cursor_visible, alternate = map(int, geometry)
@@ -211,7 +214,7 @@ class ControlStream:
             "rows": rows,
             "alternate": bool(alternate),
             "truncated": truncated,
-            "poll_after_ms": 150 if data else 400,
+            "poll_after_ms": 16 if data else 50,
             "reconstruction": "visible ANSI screen and cursor; private emulator modes and prior scrollback are not reconstructed"
             if reset
             else None,

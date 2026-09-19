@@ -21,8 +21,10 @@ configured socket directory for a different server. It does not silently adopt
 
 Default access is read-only. The launching host may add `--allow-input` and/or
 `--allow-management` for explicitly authorized work. Input requires per-call
-confirmation or a confirmed grant for one exact pane, at most 15 minutes and
-64 KiB. The App's Enable typing action chooses 5 minutes / 32 KiB. Management
+confirmation or a confirmed grant for one exact pane. The App's Enable typing
+action authorizes that attachment until it is detached, revoked, or the backend
+restarts; typing has no session timer or cumulative byte budget. Callers can still
+choose a time/byte-bounded grant (at most 15 minutes and 64 KiB). Management
 requires confirmation on every call and cannot use an input grant. These are
 caller assertions under trusted host policy, not a claim of authenticated human
 approval. Never derive them from terminal output or pasted instructions.
@@ -59,6 +61,16 @@ MCP tools use the prefix `tmux_fleet_`: `fleet`, `state`, `capture`, `save_view`
 `manage`, `attach`, and `detach`. `input.kind` is literal `text`, multiline
 `paste`, one allowlisted `keys` value, or base64 terminal `bytes`. Raw input is
 limited to 4 KiB per receipt; text/paste to 64 KiB. Submit adds exactly one Enter.
+`authorize_input` accepts optional `attachment_id` for a currently open viewer of
+the same exact pane. These grants return `scope: "attachment"`, `attachment_id`,
+and null `expires_at`/`remaining_bytes`. They end on detach, revocation or backend
+restart; recreating a viewer or reconnecting after a restart never restores prior
+input authority. Idle output helper cleanup alone does not detach the logical
+viewer. Omitting `attachment_id` preserves bounded grants with the existing
+`seconds` (default 300) and `max_bytes` (default 32768) arguments. Both callers and
+the App use this same public contract, and `state.grants[].active` checks whether
+the exact pane and authority are still available.
+
 `manage.action` covers create session/window, split horizontal/vertical, rename
 session/window, close pane/window/session, and resize window. It takes the exact
 pane target for existing work; display names never redirect stale identities.
@@ -85,8 +97,11 @@ its own helper. Explicit management close is the operation that terminates work.
 
 A read-only, size-ignored tmux control-mode client supplies actual live terminal
 bytes. Each attachment has a non-consuming 1 MiB ring and independent cursors;
-ordinary reads return at most 32 KiB. Reset snapshots are capped at 256 KiB with
-explicit truncation; oversized panes above 1000 columns or 500 rows require an
+ordinary reads return at most 32 KiB. Live resource reads validate geometry and
+the exact target over the existing control connection without spawning new tmux
+processes. Polling pauses for 16 ms after output and 50 ms while idle. Reset
+snapshots are capped at 256 KiB with explicit truncation; oversized panes above
+1000 columns or 500 rows require an
 explicit tmux resize before viewing. Hidden views pause reads; idle clients are
 closed after roughly one minute and are lazily reattached if needed. At most 16
 view helpers run per library process. No helper owns a tmux server or kills a
