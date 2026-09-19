@@ -12,8 +12,11 @@ the library. This is a proposed capability contract, not an ecosystem standard.
    a pane does not select it for other tmux clients.
 3. Read-only is the default. Host configuration separately permits input and
    management. Every management call requires its own explicit confirmation.
-   A terminal input grant may cover one exact pane, expiry and byte allowance;
-   it never covers management, another pane, or a replacement server. Confirmation
+   A terminal input grant covers one exact pane. An optional `attachment_id`
+   scopes authority to a live viewer until detach, revocation or backend restart,
+   with null expiry and byte allowance. Without that attachment, the existing
+   bounded expiry and byte allowance apply. A grant never covers management,
+   another pane, or a replacement server. Confirmation
    and actor labels are caller assertions, not authenticated human identity.
 4. New sessions/windows/splits, renames, explicit close and explicit resize are
    supported management effects. Closing a viewer only detaches its owned helper.

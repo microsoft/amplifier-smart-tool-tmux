@@ -2,7 +2,8 @@ import { App } from "@modelcontextprotocol/ext-apps";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
-const app = new App({ name: "tmux fleet terminal", version: "0.3.0" }),
+import { LiveInput } from "./live-input.js";
+const app = new App({ name: "tmux fleet terminal", version: "0.3.1" }),
   $ = (id) => document.getElementById(id),
   requestId = () =>
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) =>
@@ -22,10 +23,8 @@ let connected = false,
   dirty = false,
   busy = false,
   pending = null,
-  rawBuffer = "",
-  rawTimer,
-  inputQueue = Promise.resolve(),
-  writing = false,
+  inputAuthority = null,
+  typingStopped = false,
   refreshing = false;
 const terminal = new Terminal({
     fontFamily: "ui-monospace,SFMono-Regular,Menlo,monospace",
@@ -113,8 +112,10 @@ function grant() {
     (item) =>
       item.target_id === targetId &&
       item.active &&
-      item.expires_at * 1000 > Date.now() &&
-      item.remaining_bytes > 0,
+      (item.scope !== "attachment" ||
+        item.attachment_id === attachment?.attachment_id) &&
+      (item.expires_at === null || item.expires_at * 1000 > Date.now()) &&
+      (item.remaining_bytes === null || item.remaining_bytes > 0),
   );
 }
 function context() {
@@ -140,11 +141,21 @@ function context() {
 }
 function controls() {
   const active = grant();
-  $("writable").textContent = active
-    ? `Typing enabled · ${Math.ceil((active.expires_at * 1000 - Date.now()) / 1000)}s · ${active.remaining_bytes} bytes left`
-    : "Read only";
-  $("terminal").classList.toggle("readonly", !active);
-  $("enable").disabled = !targetId || !state?.allow_input || busy;
+  $("writable").textContent =
+    active && typingStopped
+      ? "Typing paused"
+      : active
+        ? active.scope === "attachment"
+          ? "Typing enabled · until this view closes"
+          : `Typing enabled · ${Math.ceil((active.expires_at * 1000 - Date.now()) / 1000)}s · ${active.remaining_bytes} bytes left`
+        : "Read only";
+  $("terminal").classList.toggle("readonly", !active || typingStopped);
+  $("enable").disabled =
+    !attachment ||
+    !state?.allow_input ||
+    busy ||
+    !!pending ||
+    (active?.scope === "attachment" && !typingStopped);
   $("readonly").disabled = !active || busy;
   $("detach").disabled = !targetId || busy;
   $("detach").textContent = attachment ? "Detach view" : "Open view";
@@ -197,14 +208,15 @@ async function saveDraft() {
 }
 async function selectPane(id, { external = false } = {}) {
   if (id === targetId && attachment) return;
+  liveInput.clear();
+  inputAuthority = null;
+  typingStopped = false;
   if (dirty) await saveDraft();
   const previous = attachment;
   generation++;
   clearTimeout(outputTimer);
   attachment = null;
   cursor = "start";
-  rawBuffer = "";
-  clearTimeout(rawTimer);
   targetId = id || null;
   terminal.reset();
   if (previous)
@@ -268,12 +280,14 @@ async function refresh({ fleet = false } = {}) {
           row.status === "unknown" &&
           !row.reviewed_at,
       );
-      if (unknown)
+      if (unknown) {
+        liveInput.clear();
         pending = {
           name: "input",
           args: { request_id: unknown.request_id },
           unknown: true,
         };
+      }
     }
     renderReceipts();
     controls();
@@ -313,6 +327,9 @@ async function pollOutput(epoch) {
     outputTimer = setTimeout(() => pollOutput(epoch), frame.poll_after_ms);
   } catch (error) {
     if (epoch !== generation) return;
+    liveInput.clear();
+    typingStopped = true;
+    controls();
     notice(
       "Terminal disconnected: " + error.message + " Input is not replayed.",
       true,
@@ -321,6 +338,7 @@ async function pollOutput(epoch) {
   }
 }
 async function effect(name, args) {
+  await liveInput.flush();
   if (pending)
     throw Error(
       "Inspect the previous uncertain receipt before starting another action.",
@@ -385,19 +403,23 @@ $("draft").oninput = () => {
 };
 $("enable").onclick = () =>
   action(async () => {
+    const previous = grant();
+    if (previous) await call("revoke_input", { grant_id: previous.id });
     await effect("authorize_input", {
       target_id: targetId,
       confirmed: true,
-      seconds: 300,
-      max_bytes: 32768,
+      attachment_id: attachment.attachment_id,
     });
+    typingStopped = false;
     await refresh();
-  }, "Typing enabled for this exact pane with a time and byte limit.");
+    terminal.focus();
+  }, "Typing enabled until you choose Read only or close this view.");
 $("readonly").onclick = () =>
-  action(
-    () => call("revoke_input", { grant_id: grant().id }),
-    "Input grant revoked.",
-  );
+  action(() => {
+    liveInput.clear();
+    typingStopped = true;
+    return call("revoke_input", { grant_id: grant().id });
+  }, "Input grant revoked.");
 $("detach").onclick = () => {
   const opening = !attachment;
   return action(
@@ -406,6 +428,8 @@ $("detach").onclick = () => {
         await selectPane(targetId, { external: true });
         return;
       }
+      liveInput.clear();
+      typingStopped = true;
       generation++;
       clearTimeout(outputTimer);
       await call("detach", { attachment_id: attachment.attachment_id });
@@ -472,6 +496,7 @@ $("inspect").onclick = () =>
       );
     }
     pending = null;
+    typingStopped = false;
   }, "Receipt inspected. Nothing was replayed.");
 $("reviewed").onclick = () =>
   action(async () => {
@@ -480,6 +505,7 @@ $("reviewed").onclick = () =>
       confirmed: true,
     });
     pending = null;
+    typingStopped = false;
   }, "Outcome marked reviewed; nothing was replayed.");
 $("manage").onclick = () =>
   action(async () => {
@@ -516,60 +542,160 @@ $("find").onclick = () => search.findNext($("search").value);
 $("search").onkeydown = (event) => {
   if (event.key === "Enter") search.findNext($("search").value);
 };
-$("copy").onclick = () =>
-  action(async () => {
+// Native clipboard events work in an opaque sandbox without clipboard-read
+// permission. Keep them synchronous; xterm.paste preserves bracketed-paste mode.
+terminal.element.addEventListener(
+  "copy",
+  (event) => {
     const text = terminal.getSelection();
-    if (!text) throw Error("Select terminal text first.");
-    await navigator.clipboard.writeText(text);
-  }, "Selection copied.");
+    if (text && event.clipboardData) {
+      event.clipboardData.setData("text/plain", text);
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  },
+  true,
+);
+terminal.element.addEventListener(
+  "paste",
+  (event) => {
+    if (!event.clipboardData) return;
+    const text = event.clipboardData.getData("text/plain");
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    terminal.paste(text);
+  },
+  true,
+);
+async function copySelection() {
+  const text = terminal.getSelection();
+  if (!text) {
+    notice("Select terminal text first.", true);
+    return;
+  }
+  const focused = document.activeElement;
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.style.cssText = "position:fixed;left:-9999px;top:0";
+  document.body.append(textarea);
+  textarea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } catch {}
+  textarea.remove();
+  focused?.focus({ preventScroll: true });
+  if (!copied) {
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch {}
+  }
+  notice(
+    copied
+      ? "Selection copied."
+      : "Use your browser's Copy command for the selected terminal text.",
+    !copied,
+  );
+}
+$("copy").onclick = copySelection;
+terminal.attachCustomKeyEventHandler((event) => {
+  if (event.type !== "keydown") return true;
+  const copyOrPaste =
+    (event.metaKey && !event.ctrlKey && !event.altKey) ||
+    (event.ctrlKey && event.shiftKey && !event.altKey && !event.metaKey);
+  if (!copyOrPaste) return true;
+  if (event.code === "KeyC" && terminal.hasSelection()) {
+    event.preventDefault();
+    copySelection();
+    return false;
+  }
+  // The browser delivers paste; never read clipboard contents programmatically.
+  if (event.code === "KeyV") return false;
+  return true;
+});
 for (const id of ["manage-action", "name", "cwd", "submit"])
   $(id).addEventListener("input", context);
-terminal.onData((value) => {
-  if (!grant() || (pending && !writing) || busy || !attachment) {
+const liveInput = new LiveInput({
+  async send(bytes, authority, current) {
+    if (
+      !current() ||
+      authority.generation !== generation ||
+      authority.target !== targetId ||
+      authority.attachment !== attachment?.attachment_id
+    )
+      return;
+    if (pending || grant()?.id !== authority.id)
+      throw Error(
+        "Typing permission changed. Enable typing again to continue.",
+      );
+    const intent = {
+      name: "input",
+      args: {
+        target_id: authority.target,
+        kind: "bytes",
+        value: btoa(String.fromCharCode(...bytes)),
+        grant_id: authority.id,
+        request_id: requestId(),
+        actor: "app-reported",
+      },
+    };
+    try {
+      await call("input", intent.args);
+      if (!current()) return;
+      const active = state?.grants.find((item) => item.id === authority.id);
+      if (active?.remaining_bytes != null)
+        active.remaining_bytes -= bytes.length;
+    } catch (error) {
+      if (!error.definitive || error.receipt?.status === "unknown")
+        error.intent = {
+          ...intent,
+          unknown: error.receipt?.status === "unknown",
+        };
+      throw error;
+    }
+  },
+  failed(error) {
+    typingStopped = true;
+    if (error.intent) pending = error.intent;
     notice(
-      "Enable typing for this exact pane before using the live keyboard.",
+      error.message +
+        " Unsent keystrokes were discarded; input will not be replayed.",
+      true,
+    );
+    controls();
+    context();
+  },
+});
+terminal.onData((value) => {
+  const active = grant();
+  if (!active || pending || busy || typingStopped || !attachment) {
+    notice(
+      pending
+        ? "Inspect the uncertain receipt before typing again."
+        : "Enable typing for this pane before using the live keyboard.",
       true,
     );
     return;
   }
-  rawBuffer += value;
-  clearTimeout(rawTimer);
-  rawTimer = setTimeout(() => {
-    const text = rawBuffer;
-    rawBuffer = "";
-    const target = targetId,
-      authority = grant()?.id;
-    inputQueue = inputQueue.then(async () => {
-      if (target !== targetId || !authority || pending || !grant()) return;
-      writing = true;
-      try {
-        const bytes = new TextEncoder().encode(text);
-        if (bytes.length > 4096)
-          throw Error(
-            "Use the shared paste draft for input larger than 4 KiB.",
-          );
-        await effect("input", {
-          target_id: target,
-          kind: "bytes",
-          value: btoa(String.fromCharCode(...bytes)),
-          grant_id: authority,
-        });
-        await refresh();
-      } catch (error) {
-        rawBuffer = "";
-        notice(
-          error.message + " Buffered keystrokes were discarded, not replayed.",
-          true,
-        );
-      } finally {
-        writing = false;
-      }
-    });
-  }, 40);
+  if (
+    inputAuthority?.id !== active.id ||
+    inputAuthority.generation !== generation
+  )
+    inputAuthority = {
+      id: active.id,
+      target: targetId,
+      attachment: attachment.attachment_id,
+      generation,
+    };
+  liveInput.push(value, inputAuthority);
 });
 app.onhostcontextchanged = theme;
-app.ontoolresult = () => {
-  if (connected && !busy)
+app.ontoolresult = (result) => {
+  // Receipts still appear in the periodic state view, but a keyboard response
+  // must not trigger another fleet/state/context round trip.
+  if (result?.structuredContent?.operation === "input") return;
+  if (connected && !busy && !liveInput.active)
     refresh({ fleet: true }).catch((error) => notice(error.message, true));
 };
 app.onteardown = async () => {
@@ -578,7 +704,7 @@ app.onteardown = async () => {
   clearTimeout(outputTimer);
   clearTimeout(stateTimer);
   clearTimeout(draftTimer);
-  clearTimeout(rawTimer);
+  liveInput.clear();
   if (attachment)
     await call("detach", { attachment_id: attachment.attachment_id }).catch(
       () => {},
@@ -589,7 +715,7 @@ app.onteardown = async () => {
 async function pollState() {
   if (ended) return;
   try {
-    if (!document.hidden && !writing) await refresh();
+    if (!document.hidden && !liveInput.active) await refresh();
   } catch (error) {
     notice(error.message, true);
   }

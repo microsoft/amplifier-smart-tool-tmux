@@ -106,6 +106,179 @@ def test_grants_are_target_expiry_byte_scoped_and_host_permission_cannot_be_chan
     run(check())
 
 
+def test_attachment_grant_lasts_until_detach_or_revoke_without_typing_budget(
+    tmp_path, monkeypatch
+):
+    from tmux_fleet import terminal
+
+    async def check():
+        async with fleet("one", "two") as (_, kw):
+            library = TerminalFleet(tmp_path, **kw, allow_input=True)
+            first, second = (await library.fleet())["panes"]
+            viewer = await library.attach(first["id"])
+            args = {
+                "target_id": first["id"],
+                "request_id": rid(),
+                "attachment_id": viewer["attachment_id"],
+                "confirmed": True,
+                "seconds": 1,
+                "max_bytes": 1,
+            }
+            receipt = await library.authorize_input(**args)
+            grant = receipt["result"]
+            assert grant["scope"] == "attachment"
+            assert grant["expires_at"] is None and grant["remaining_bytes"] is None
+            assert (await library.state())["grants"][0]["active"]
+            assert (
+                await library.authorize_input(
+                    **{**args, "request_id": rid(), "target_id": second["id"]}
+                )
+            )["status"] == "refused"
+            assert (
+                await library.input(second["id"], rid(), "text", "no", grant_id=grant["id"])
+            )["status"] == "refused"
+            later = terminal.time.time() + 3600
+            monkeypatch.setattr(terminal.time, "time", lambda: later)
+            # Both the former timer and cumulative byte limit are inapplicable.
+            assert (
+                await library.input(first["id"], rid(), "text", "still typing", grant_id=grant["id"])
+            )["status"] == "succeeded"
+            assert (await library.state())["grants"][0]["active"]
+            # Idle output helpers can reconnect without ending the logical view.
+            await library.streams[viewer["attachment_id"]].close()
+            await library.output(viewer["attachment_id"])
+            assert (await library.state())["grants"][0]["active"]
+            await library.detach(viewer["attachment_id"])
+            await library.attach(first["id"])
+            assert not (await library.state())["grants"][0]["active"]
+            assert await library.authorize_input(**args) == receipt
+            assert (
+                await library.input(first["id"], rid(), "text", "no", grant_id=grant["id"])
+            )["status"] == "refused"
+            fresh_viewer = await library.attach(first["id"])
+            fresh = (
+                await library.authorize_input(
+                    first["id"], rid(), confirmed=True,
+                    attachment_id=fresh_viewer["attachment_id"],
+                )
+            )["result"]
+            await library.revoke_input(fresh["id"])
+            assert all(not g["active"] for g in (await library.state())["grants"])
+            assert (
+                await library.input(first["id"], rid(), "text", "no", grant_id=fresh["id"])
+            )["status"] == "refused"
+            await library.close()
+
+    run(check())
+
+
+def test_attachment_grant_does_not_survive_backend_restart_or_revive_on_reconnect(tmp_path):
+    async def check():
+        async with fleet("one") as (_, kw):
+            library = TerminalFleet(tmp_path, **kw, allow_input=True)
+            pane = (await library.fleet())["panes"][0]
+            viewer = await library.attach(pane["id"])
+            args = {
+                "target_id": pane["id"], "request_id": rid(), "confirmed": True,
+                "attachment_id": viewer["attachment_id"],
+            }
+            receipt = await library.authorize_input(**args)
+            grant = receipt["result"]
+            await library.close()
+            reopened = TerminalFleet(tmp_path, **kw, allow_input=True)
+            await reopened.output(viewer["attachment_id"])
+            assert not (await reopened.state())["grants"][0]["active"]
+            assert await reopened.authorize_input(**args) == receipt
+            assert (
+                await reopened.input(pane["id"], rid(), "text", "no", grant_id=grant["id"])
+            )["status"] == "refused"
+            fresh = await reopened.authorize_input(**{**args, "request_id": rid()})
+            assert fresh["status"] == "succeeded"
+            assert fresh["result"]["id"] != grant["id"]
+            reopened.allow_input = False
+            assert all(not g["active"] for g in (await reopened.state())["grants"])
+            await reopened.close()
+
+    run(check())
+
+
+def test_attachment_grant_requires_confirmation_and_live_matching_viewer(tmp_path):
+    async def check():
+        async with fleet("one") as (_, kw):
+            library = TerminalFleet(tmp_path, **kw, allow_input=True)
+            pane = (await library.fleet())["panes"][0]
+            assert (
+                await library.authorize_input(
+                    pane["id"], rid(), confirmed=True, attachment_id=rid()
+                )
+            )["status"] == "refused"
+            viewer = await library.attach(pane["id"])
+            assert (
+                await library.authorize_input(
+                    pane["id"], rid(), attachment_id=viewer["attachment_id"]
+                )
+            )["status"] == "refused"
+            await library.detach(viewer["attachment_id"])
+            assert (
+                await library.authorize_input(
+                    pane["id"], rid(), confirmed=True,
+                    attachment_id=viewer["attachment_id"],
+                )
+            )["status"] == "refused"
+            await library.close()
+
+    run(check())
+
+
+def test_attachment_grant_and_persistent_output_reject_moved_pane(tmp_path):
+    async def check():
+        async with fleet("one", "keeper") as (srv, kw):
+            library = TerminalFleet(tmp_path, **kw, allow_input=True)
+            pane, keeper = (await library.fleet())["panes"]
+            viewer = await library.attach(pane["id"])
+            await library.output(viewer["attachment_id"])
+            grant = (
+                await library.authorize_input(
+                    pane["id"], rid(), confirmed=True,
+                    attachment_id=viewer["attachment_id"],
+                )
+            )["result"]
+            await srv.run("join-pane", "-d", "-s", pane["pane_id"], "-t", keeper["pane_id"])
+            assert not (await library.state())["grants"][0]["active"]
+            with pytest.raises(TerminalError):
+                await library.output(viewer["attachment_id"])
+            assert (
+                await library.input(pane["id"], rid(), "text", "no", grant_id=grant["id"])
+            )["status"] == "refused"
+            await library.close()
+
+    run(check())
+
+
+def test_live_output_uses_owned_connection_without_per_poll_subprocesses(tmp_path):
+    async def check():
+        async with fleet("one") as (srv, kw):
+            library = TerminalFleet(tmp_path, **kw)
+            pane = (await library.fleet())["panes"][0]
+            viewer = await library.attach(pane["id"])
+
+            async def unexpected_subprocess(*args, **kwargs):
+                raise AssertionError("Live resource polling must reuse its control connection")
+
+            library._run = unexpected_subprocess
+            frame = await library.output(viewer["attachment_id"])
+            await srv.run("send-keys", "-t", pane["pane_id"], "-l", "LIVE_OUTPUT")
+            await asyncio.sleep(0.05)
+            following = await library.output(viewer["attachment_id"], frame["next_cursor"])
+            assert b"LIVE_OUTPUT" in base64.b64decode(following["data"])
+            assert following["poll_after_ms"] == 16
+            idle = await library.output(viewer["attachment_id"], following["next_cursor"])
+            assert not idle["data"] and idle["poll_after_ms"] == 50
+            await library.close()
+
+    run(check())
+
+
 def test_unknown_dispatch_is_durable_and_blocks_new_input_until_reviewed(tmp_path):
     async def check():
         async with fleet("one") as (_, kw):

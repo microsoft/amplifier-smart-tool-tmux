@@ -39,7 +39,7 @@ from tmux_fleet.smart import interpret, triage
 try:
     __version__ = _pkg_version("tmux-fleet")
 except PackageNotFoundError:  # pragma: no cover - source checkout without metadata
-    __version__ = "0.3.0"
+    __version__ = "0.3.1"
 
 __all__ = [
     "__version__",
