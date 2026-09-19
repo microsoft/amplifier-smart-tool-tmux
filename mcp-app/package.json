@@ -1,0 +1,17 @@
+{
+  "name": "tmux-fleet-terminal-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "2.0.0",
+    "@xterm/xterm": "5.5.0",
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/addon-search": "0.15.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

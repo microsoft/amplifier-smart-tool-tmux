@@ -15,3 +15,5 @@ build/
 /GOAL.md
 
 evidence/*.out.txt
+
+node_modules/

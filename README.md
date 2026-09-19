@@ -91,6 +91,16 @@ asyncio.run(list_sessions())
 manifest()  # structured manifest, read from the copy built into the tool
 ```
 
+## Optional collaborative terminal surface
+
+For exact-pane terminal views, shared drafts, retained input receipts and explicit
+session/window/pane management, see [collaborative terminals](docs/collaborative-terminals.md).
+The optional `[mcp]` extra supplies typed MCP tools and a bundled xterm MCP App;
+all operations also belong to the public `TerminalFleet` library and deterministic
+JSON adapter. Default access is read-only. Existing CLI write confirmation remains
+unchanged, and opening or closing a viewer never starts or terminates tmux work.
+
+
 ## Conformance
 
 The smart-tools conformance kit belongs to the spec repo and is read from there,

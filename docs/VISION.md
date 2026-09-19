@@ -64,9 +64,13 @@ are failures unless the capability documents otherwise.
 
 Reads are safe by construction. The write verbs (`send`, `create`) refuse
 without an explicit per-invocation confirmation; every attempt — refused or
-delivered — lands in an append-only audit log. There is no verb that kills or
-renames a session, and there will not be one. Every tmux invocation names its
-socket explicitly; ambient `$TMUX`/`TMUX_TMPDIR` are ignored and reported, never
+delivered — lands in an append-only audit log. The optional collaborative terminal
+library adds explicitly confirmed management (create, split, rename, close and
+resize) and expiring, byte-bounded input grants
+for an exact pane. Host configuration opts into those effects; legacy CLI write
+confirmation remains unchanged. Closing a view never closes the underlying work.
+See `contracts/terminal.v1.md` for exact identities, durable receipts and authority.
+Every tmux invocation names its socket explicitly; ambient `$TMUX`/`TMUX_TMPDIR` are ignored and reported, never
 inherited.
 
 ### 6. Failures name the remedy
@@ -78,12 +82,20 @@ fix it is a working feature; an empty result or bare stack trace is a defect.
 
 - **Provider credentials in-tool** — keys arrive from the caller's environment
   at runtime; they are never stored, bundled, or logged.
-- **Kill/rename/undo verbs** — this tool observes a fleet it did not create.
+- **Implicit destructive management or replay** — existing work is not owned merely
+  because a viewer can observe it; closes are separate confirmed effects.
 - **Vendoring tmux-kit** — mechanism improvements go upstream.
 - **Prose answers from smart verbs** — structured output or it did not happen.
 - **Capability that exists only in the CLI** — the library is the product.
 
 ## Changelog
+
+- **2026-09-18** — §5 amended for a demonstrated collaborative terminal consumer:
+  users and agents need to manage existing and new same-host sessions alongside
+  retained work. Optional exact-target management and bounded interactive input
+  replace the categorical kill/rename prohibition; default read-only access,
+  explicit confirmation and audit remain. MCP/MCP Apps are optional presentation
+  over public library actions, not a new product identity.
 
 - **2026-08-27** — §3 amended: the AI substrate moves from a shared
   machine-service binary (driven via the subprocess SDK) to the engine library
