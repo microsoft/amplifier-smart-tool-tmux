@@ -17,3 +17,7 @@ build/
 evidence/*.out.txt
 
 node_modules/
+
+# Generated website and local checks
+_site/
+.work/
