@@ -1,7 +1,7 @@
 ---
 smart_tool_format: 1
 name: tmux-fleet
-version: 0.3.1
+version: 0.3.2
 description: >
   Tells you what is happening across every tmux session on a machine — which are
   parked at a prompt, which finished and how, which need a human — and, only
@@ -30,7 +30,7 @@ requires:
       The model-backed verbs (triage, interpret) run through the amplifier-agent
       engine, which is embedded in-process and ships as a regular dependency of
       this tool — nothing to install separately. What they DO need is a provider:
-      a provider SDK, installed via an extra (e.g. `tmux-fleet[anthropic]`), plus
+      the declared Agent runtime dependencies plus
       that provider's credentials in the environment. Optional: every
       deterministic verb (socket, sessions, attention, read, send, create,
       doctor, exit-code) works with no provider at all; only triage and interpret
@@ -76,15 +76,19 @@ uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux
 ```
 
 `tmux` must be on PATH; every verb is a tmux client. The model-backed verbs also need
-a provider SDK, installed as an extra (`tmux-fleet[anthropic]` or `tmux-fleet[openai]`),
-and that provider's credentials in the environment. `doctor` reports what this host
+the declared Agent runtime dependencies and the selected provider's credentials
+in the environment. The anthropic/openai extras remain available for compatibility. `doctor` reports what this host
 has and what is missing.
 
 ## Model-backed verbs
 
 `triage` and `interpret` run a single model turn through the amplifier-agent engine,
-embedded in-process. They consume tokens and may answer differently on a second run.
-Invoked without a usable substrate (provider SDK extra, provider configuration, or
+through its public Python binding, embedded in-process. Set `TMUX_FLEET_MODEL`
+(or `AMPLIFIER_AGENT_MODEL`) to the exact model to use with the selected provider.
+`TMUX_FLEET_PROVIDER` pins the provider; otherwise credential presence selects one.
+No matching model is guessed. Sessions are ephemeral, with no tools and denied
+approvals. They consume tokens and may answer differently on a second run.
+Invoked without a usable substrate (runtime dependencies, provider/model configuration, or
 credentials) they fail naming exactly which precondition is missing, never falling
 back to a deterministic guess. Every other verb runs with nothing configured.
 

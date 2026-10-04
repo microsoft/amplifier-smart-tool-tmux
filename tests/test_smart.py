@@ -12,12 +12,11 @@ import json
 import subprocess
 import sys
 import textwrap
-from types import SimpleNamespace
 
 import pytest
+from _helpers import run
 
 from tmux_fleet import agent, cli, smart
-from _helpers import run
 
 _NO_SOCKET = "/tmp/tmux-fleet-tests-no-such-socket-dir"
 
@@ -70,7 +69,9 @@ def test_select_provider_prefers_and_returns():
     assert agent._select_provider(["openai", "anthropic"], override=None) == "anthropic"
     assert agent._select_provider(["openai"], override=None) == "openai"
     # an explicit, resolvable pin is honoured
-    assert agent._select_provider(["anthropic", "openai"], override="openai") == "openai"
+    assert (
+        agent._select_provider(["anthropic", "openai"], override="openai") == "openai"
+    )
     # a resolvable provider outside the preference list is still usable
     assert agent._select_provider(["ollama"], override=None) == "ollama"
 
@@ -82,106 +83,51 @@ def test_engine_dependency_missing_is_named_refusal(monkeypatch):
     real_import = builtins.__import__
 
     def fake_import(name, *a, **k):
-        if name == "amplifier_agent_lib" or name.startswith("amplifier_agent_lib."):
-            raise ModuleNotFoundError("No module named 'amplifier_agent_lib'")
+        if name == "amplifier_agent" or name.startswith("amplifier_agent."):
+            raise ModuleNotFoundError("No module named 'amplifier_agent'")
         return real_import(name, *a, **k)
 
     monkeypatch.setattr(builtins, "__import__", fake_import)
     with pytest.raises(agent.AgentUnavailable) as ei:
         agent._load_engine()
     msg = str(ei.value)
-    assert "amplifier_agent_lib" in msg
+    assert "amplifier_agent" in msg
     assert "uv sync" in msg or "tmux-fleet[" in msg  # a reinstall remedy is named
 
 
-# case 2: the selected provider's SDK extra is not installed
-def test_provider_sdk_extra_missing_is_named_refusal():
-    class FakeSyms:
-        def inject_provider(self, prepared, provider):
-            raise ModuleNotFoundError("No module named 'anthropic'")
-
-        def inject_routing_matrix(self, prepared, provider):
-            pass
-
-    prepared = SimpleNamespace(mount_plan={"providers": ["stub"]})
-    with pytest.raises(agent.AgentUnavailable) as ei:
-        agent._mount_provider(FakeSyms(), prepared, "anthropic")
-    msg = str(ei.value)
-    assert "anthropic" in msg
-    assert "tmux-fleet[anthropic]" in msg  # the exact extra to install is named
-    # clearing the catalog stubs is required, and must have happened
-    assert prepared.mount_plan["providers"] == []
-
-
-# --- the same four cases, driven end-to-end through the smart verbs ---------
-
-
-def _fake_engine(**over):
-    """A stand-in for _load_engine()'s return -- avoids importing the real engine."""
-
-    async def _prepare(*a, **k):
-        return SimpleNamespace(mount_plan={"providers": ["stub"]})
-
-    base = dict(
-        version="test",
-        enumerate_resolvable_providers=lambda: [],
-        load_and_prepare_cached=_prepare,
-        inject_provider=lambda prepared, provider: None,
-        inject_routing_matrix=lambda prepared, provider: None,
-    )
-    base.update(over)
-    return SimpleNamespace(**base)
-
-
+# Provider selection stays independent from runtime construction.
 def test_triage_refuses_when_engine_dependency_missing(monkeypatch):
     def boom():
         raise agent.AgentUnavailable(
-            agent._engine_missing_hint("No module named 'amplifier_agent_lib'")
+            agent._engine_missing_hint("missing amplifier_agent")
         )
 
     monkeypatch.setattr(agent, "_load_engine", boom)
-    with pytest.raises(agent.AgentUnavailable) as ei:
+    with pytest.raises(agent.AgentUnavailable, match="amplifier_agent"):
         run(smart.triage(socket_dir=_NO_SOCKET))
-    assert "amplifier_agent_lib" in str(ei.value)
-
-
-def test_triage_refuses_when_provider_sdk_extra_missing(monkeypatch):
-    def _inject(prepared, provider):
-        raise ModuleNotFoundError("No module named 'anthropic'")
-
-    monkeypatch.delenv(agent.PROVIDER_ENV_VAR, raising=False)
-    monkeypatch.setattr(
-        agent,
-        "_load_engine",
-        lambda: _fake_engine(
-            enumerate_resolvable_providers=lambda: ["anthropic"],
-            inject_provider=_inject,
-        ),
-    )
-    with pytest.raises(agent.AgentUnavailable) as ei:
-        run(smart.triage(socket_dir=_NO_SOCKET))
-    assert "tmux-fleet[anthropic]" in str(ei.value)
 
 
 def test_triage_refuses_when_no_provider_configured(monkeypatch):
     monkeypatch.delenv(agent.PROVIDER_ENV_VAR, raising=False)
-    monkeypatch.setattr(
-        agent, "_load_engine", lambda: _fake_engine(enumerate_resolvable_providers=lambda: [])
-    )
-    with pytest.raises(agent.AgentUnavailable) as ei:
+    monkeypatch.setattr(agent, "_resolvable_providers", lambda: [])
+    with pytest.raises(agent.AgentUnavailable, match="no AI provider is configured"):
         run(smart.triage(socket_dir=_NO_SOCKET))
-    assert "no AI provider is configured" in str(ei.value)
 
 
 def test_interpret_refuses_when_pinned_provider_lacks_credentials(monkeypatch):
     monkeypatch.setenv(agent.PROVIDER_ENV_VAR, "anthropic")
-    monkeypatch.setattr(
-        agent, "_load_engine", lambda: _fake_engine(enumerate_resolvable_providers=lambda: ["openai"])
-    )
-    with pytest.raises(agent.AgentUnavailable) as ei:
+    monkeypatch.setattr(agent, "_resolvable_providers", lambda: ["openai"])
+    with pytest.raises(agent.AgentUnavailable, match="anthropic"):
         run(smart.interpret("anything", socket_dir=_NO_SOCKET))
-    msg = str(ei.value)
-    assert "anthropic" in msg and agent.PROVIDER_ENV_VAR in msg
+
+
+def test_missing_model_refuses_before_agent_construction(monkeypatch):
+    monkeypatch.setattr(agent, "_resolvable_providers", lambda: ["openai"])
+    monkeypatch.delenv(agent.PROVIDER_ENV_VAR, raising=False)
+    monkeypatch.delenv("TMUX_FLEET_MODEL", raising=False)
+    monkeypatch.delenv("AMPLIFIER_AGENT_MODEL", raising=False)
+    with pytest.raises(agent.AgentUnavailable, match="TMUX_FLEET_MODEL"):
+        run(smart.triage(socket_dir=_NO_SOCKET))
 
 
 # --------------------------------------------------------------------------
@@ -217,7 +163,7 @@ def test_deterministic_paths_do_not_import_the_engine():
         from tmux_fleet import cli
 
         # importing the package + CLI must not have pulled the engine in
-        assert "amplifier_agent_lib" not in sys.modules, "engine imported at module load"
+        assert "amplifier_agent" not in sys.modules, "engine imported at module load"
 
         # --help must not import the engine
         try:

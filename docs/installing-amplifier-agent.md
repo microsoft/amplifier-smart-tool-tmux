@@ -1,76 +1,46 @@
-# Configuring a provider for the model-backed verbs
+# Configuring model-backed verbs
 
-The model-backed verbs — `triage` and `interpret` — execute through
-**amplifier-agent's engine, embedded in this tool's own process**. There is no
-separate binary to install and nothing to put on your `PATH`: the engine ships
-as a regular dependency of `tmux-fleet` and is imported in-process only when a
-smart verb actually runs.
+`triage` and `interpret` use the public `amplifier_agent` Python binding in the
+tool's own process. The binding and its engine/provider dependencies install with
+`tmux-fleet`; deterministic verbs do not import or initialize them. The
+`anthropic` and `openai` extras remain compatible installation aliases.
 
-Every deterministic verb (`socket`, `sessions`, `attention`, `read`, `send`,
-`create`, `doctor`, `exit-code`) works with none of the below. The smart verbs
-need two things, and when either is missing they fail loudly naming exactly
-which — they never silently degrade to a deterministic guess.
+Choose credentials, provider and model explicitly, for example:
 
-## 1. Install a provider SDK (an extra)
-
-The engine talks to a model provider through that provider's Python SDK. To keep
-the base install lean, provider SDKs are **optional extras**, not core
-dependencies. Install the extra that matches the provider you intend to use:
-
-```
-uv add "tmux-fleet[anthropic]"      # Anthropic
-uv add "tmux-fleet[openai]"         # OpenAI
-```
-
-or, into an existing environment:
-
-```
-pip install "tmux-fleet[anthropic]"
-```
-
-Without the matching extra, a smart verb refuses with a message naming the exact
-extra to install (`tmux-fleet[<provider>]`).
-
-## 2. Provide credentials in the environment
-
-**This tool never stores provider credentials.** They arrive from your
-environment at runtime, exactly like any other credential your shell already
-holds. Export the key for your provider before running a smart verb:
-
-```
-export ANTHROPIC_API_KEY=sk-ant-...     # Anthropic
-export OPENAI_API_KEY=sk-...            # OpenAI
-export GOOGLE_API_KEY=...               # Gemini
-```
-
-The engine auto-selects a provider from whichever credentials resolve. To pin
-one explicitly (for example when several are configured), set
-`TMUX_FLEET_PROVIDER`:
-
-```
+```sh
+export ANTHROPIC_API_KEY=...
 export TMUX_FLEET_PROVIDER=anthropic
+export TMUX_FLEET_MODEL=<an-exact-model-your-account-can-use>
 ```
 
-If a pinned provider has no resolvable credentials, the smart verbs fail loudly
-naming that provider and the environment variable to set — never a silent
-fallback.
+`TMUX_FLEET_PROVIDER` is optional: otherwise credential presence selects Anthropic,
+OpenAI, Gemini or Azure OpenAI first, then another configured provider. Presence
+is only a selection hint; the Agent validates access. A pinned unavailable provider
+refuses without fallback. `TMUX_FLEET_MODEL` (or `AMPLIFIER_AGENT_MODEL`) is required;
+a provider choice never substitutes a model from another provider.
 
-## Try it
+API keys come from the provider's environment variables, including
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`/`GEMINI_API_KEY`, and
+`AZURE_OPENAI_API_KEY`. Copilot accepts its native token variables. For ChatGPT,
+the public Agent uses its provider-owned `~/.amplifier/openai-chatgpt-oauth.json`
+cache. This tool does not log in, migrate credentials or store its own copy.
+Agent 0.20 rejects legacy `AMPLIFIER_AGENT_HOME`; that named refusal is preserved.
+An old Agent credential-home override is not silently ignored or rewritten.
 
-Run `tmux-fleet --help` — the model-backed verbs are marked there — then:
+Every smart invocation gets a fresh ephemeral session and temporary storage,
+with no tools, skills or MCP servers and approvals denied. The timeout cancels
+and joins the owned turn. A failed or timed-out turn is never automatically
+retried. New invocations are new model work and can spend tokens.
 
-```
-tmux-fleet triage
-```
+## Refusals
 
-## Refusal taxonomy
-
-A smart verb invoked without a usable substrate names exactly which precondition
-is missing:
-
-| Precondition missing | What to do |
+| Missing precondition | Remedy |
 | --- | --- |
-| The engine dependency (`amplifier_agent_lib`) is not importable | Reinstall the tool so `amplifier-agent` is present (`uv sync`). |
-| The selected provider's SDK is not installed | Install the matching extra, e.g. `pip install "tmux-fleet[anthropic]"`. |
-| No provider is configured (no credentials resolve, none pinned) | Export a provider key (e.g. `ANTHROPIC_API_KEY`) or pin `TMUX_FLEET_PROVIDER`. |
-| A pinned provider has no credentials in the environment | Export that provider's key, or unset `TMUX_FLEET_PROVIDER`. |
+| Public binding `amplifier_agent` | Reinstall the tool and its declared dependencies. |
+| Provider SDK | Repair the declared Agent dependencies or install the corresponding compatible extra. |
+| Provider credentials | Configure the chosen provider's credentials. |
+| Exact model | Set `TMUX_FLEET_MODEL` or `AMPLIFIER_AGENT_MODEL`. |
+| Agent configuration compatibility | Follow the public Agent's named remedy; no host settings are changed automatically. |
+
+`tmux-fleet --help` describes all verbs. Only `triage` and `interpret` use a model;
+all other verbs retain their existing confirmation and audit requirements.

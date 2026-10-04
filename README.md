@@ -31,18 +31,20 @@ uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux@v0.2.
 
 Its regular dependencies include `tmux-kit>=0.8.0`; uv resolves and installs
 that dependency automatically. To use the
-model-backed verbs you additionally install the extra for your provider's SDK
+model-backed verbs you additionally configure a provider and an exact model
 and supply that provider's credentials from your environment (the tool stores
 none):
 
 ```
-uv tool install "git+<this repo>" --with anthropic   # or: pip install "tmux-fleet[anthropic]"
-export ANTHROPIC_API_KEY=sk-ant-...
+uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux
+export ANTHROPIC_API_KEY=...
+export TMUX_FLEET_PROVIDER=anthropic
+export TMUX_FLEET_MODEL=<an-exact-model-your-account-can-use>
 ```
 
-Extras available today: `anthropic`, `openai`. See
+The `anthropic` and `openai` extras remain compatible aliases. See
 [`docs/installing-amplifier-agent.md`](docs/installing-amplifier-agent.md) for
-provider configuration, the `TMUX_FLEET_PROVIDER` pin, and the refusal taxonomy.
+provider/model selection, OAuth cache compatibility and refusal remedies.
 
 ## Use
 
