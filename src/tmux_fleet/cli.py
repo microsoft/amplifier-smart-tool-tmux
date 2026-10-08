@@ -43,6 +43,7 @@ from tmux_fleet import (
 # package `__init__` binds the ATTRIBUTE `tmux_fleet.manifest` to the accessor
 # FUNCTION, which IMPORT_FROM's getattr would return instead of the submodule.
 from tmux_fleet.manifest import ManifestError as _ManifestError
+from tmux_fleet.manifest import manifest as _manifest
 from tmux_fleet.manifest import manifest_dict as _manifest_dict
 from tmux_fleet.skill import skill
 from tmux_fleet.verbs import MODEL_BACKED_NOTE, VERB_BY_NAME, VERBS, params as _params, usage as _usage
@@ -141,6 +142,7 @@ def _terse_help() -> str:
         "stdout with a non-zero exit (2 = refused, 1 = read/agent failure).",
         "Run `tmux-fleet --help` for this tool's skill, or",
         "`tmux-fleet VERB -h` / `tmux-fleet VERB --help` for one verb.",
+        "Run `tmux-fleet -V` / `tmux-fleet --version` for the installed version.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -190,6 +192,27 @@ class _SkillAction(argparse.Action):
 
     def __call__(self, parser, namespace, values, option_string=None):  # noqa: ANN001
         sys.stdout.write(skill())
+        parser.exit(EXIT_OK)
+
+
+class _VersionAction(argparse.Action):
+    """Prints the manifest version and exits 0, mid-parse.
+
+    Firing during parsing returns before argparse demands a verb, so
+    ``tmux-fleet -V`` answers with nothing else on the command line.
+    """
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, **kwargs):
+        super().__init__(option_strings, dest, nargs=0, help="this tool's version", **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):  # noqa: ANN001
+        try:
+            version = _manifest().version
+        except _ManifestError as exc:
+            code, exit_code, remedy = _classify(exc)
+            _emit_error(code, str(exc), remedy)
+            parser.exit(exit_code)
+        sys.stdout.write(f"tmux-fleet {version}\n")
         parser.exit(EXIT_OK)
 
 
@@ -260,6 +283,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-h", action=_TerseHelpAction)
     parser.add_argument("--help", action=_SkillAction)
+    parser.add_argument("-V", "--version", action=_VersionAction)
 
     sub = parser.add_subparsers(dest="command", required=True)
     socket_opt = _socket_dir_parent()

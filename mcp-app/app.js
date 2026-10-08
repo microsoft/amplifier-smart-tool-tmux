@@ -3,7 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { LiveInput } from "./live-input.js";
-const app = new App({ name: "tmux fleet terminal", version: "0.3.1" }),
+const app = new App({ name: "tmux fleet terminal", version: "0.3.2" }),
   $ = (id) => document.getElementById(id),
   requestId = () =>
     Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) =>

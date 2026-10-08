@@ -1,7 +1,7 @@
 ---
 smart_tool_format: 1
 name: tmux-fleet
-version: 0.3.1
+version: 0.3.2
 description: >
   Tells you what is happening across every tmux session on a machine — which are
   parked at a prompt, which finished and how, which need a human — and, only
@@ -74,6 +74,8 @@ piping CLI output.
 ```
 uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux
 ```
+
+To upgrade, run `uv tool upgrade tmux-fleet`.
 
 `tmux` must be on PATH; every verb is a tmux client. The model-backed verbs also need
 a provider SDK, installed as an extra (`tmux-fleet[anthropic]` or `tmux-fleet[openai]`),
