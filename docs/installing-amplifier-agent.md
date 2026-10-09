@@ -28,14 +28,16 @@ or, into an existing environment:
 pip install "tmux-fleet[anthropic]"
 ```
 
-Public `list_providers()` discovery checks SDK availability and credentials
-before constructing an agent. A missing SDK still refuses with an install hint.
+Public `list_providers()` discovery reports registered provider IDs, SDK
+availability and advisory credential presence. An unknown pin refuses with the
+registered IDs; an unavailable SDK refuses with an install hint before model or
+credential checks.
 
-## 2. Provide credentials in the environment
+## 2. Configure the provider connection outside the tool
 
-**This tool never stores provider credentials.** They arrive from your
-environment at runtime, exactly like any other credential your shell already
-holds. Export the key for your provider before running a smart verb:
+**This tool never stores provider credentials.** Agent resolves the connection
+from the caller's environment or the provider's existing login. For key-based
+providers, export the key before running a smart verb:
 
 ```
 export ANTHROPIC_API_KEY=sk-ant-...     # Anthropic
@@ -43,7 +45,9 @@ export OPENAI_API_KEY=sk-...            # OpenAI
 export GOOGLE_API_KEY=...               # Gemini
 ```
 
-The engine auto-selects a provider from whichever credentials resolve. To pin
+For automatic selection, tmux-fleet uses public discovery's credential presence
+with the preference Anthropic, OpenAI, Gemini, then Azure OpenAI, followed by
+other eligible records in discovery order. To pin
 one explicitly (for example when several are configured), set
 `TMUX_FLEET_PROVIDER`:
 
@@ -51,19 +55,21 @@ one explicitly (for example when several are configured), set
 export TMUX_FLEET_PROVIDER=anthropic
 ```
 
-If a pinned provider has no resolvable credentials, the smart verbs fail loudly
-naming that provider and the environment variable to set — never a silent
-fallback.
+A registered, installed pin proceeds to real public Agent construction even
+when discovery reports credentials missing: OAuth or Azure identity construction
+can know more than that advisory record. Construction refusals preserve Agent's
+public code, category, message and remedy (including provider-specific key or
+login guidance). There is no silent fallback to another provider.
 
 ## Try it
 
-For Anthropic, the upstream configured/default model remains available without
+For Anthropic, the upstream configured/default pair remains available without
 `TMUX_FLEET_MODEL`. Agent v0.22.0 documents Anthropic and `claude-sonnet-5-5` as
 its defaults in [configuration](https://github.com/microsoft/amplifier-agent/blob/v0.22.0/docs/configuration.md).
 For every non-default provider, `TMUX_FLEET_MODEL` is required and must name a
 model compatible with that provider. Agent does not automatically match its
 ambient/default model to a changed provider, so the tool refuses rather than
-guessing or silently running Anthropic. This is a migration requirement:
+guessing. This is a migration requirement:
 
 ```sh
 export TMUX_FLEET_PROVIDER=openai
@@ -74,18 +80,37 @@ tmux-fleet triage
 ```
 
 An explicit `TMUX_FLEET_MODEL` overrides `AMPLIFIER_AGENT_MODEL` and the Agent
-config/default model; the tool does not maintain a provider/model table. Set
+config/default model and pins both model and the tool-selected provider.
+Without it, Agent resolves the ambient provider/model pair intact; tmux-fleet
+does not read private configuration or reimplement its precedence.
+The public ephemeral `session.info` must match the tool-selected provider and,
+when explicit, the tool model. A mismatch refuses before any turn, naming the
+observed pair and requested selection with a `TMUX_FLEET_MODEL` remedy.
+If construction refuses before session info is available, the tool reports the
+actual public construction error, not a purported observed mismatch; without a
+tool model it also names the conditional explicit-model escape hatch.
+The tool does not maintain a provider/model compatibility table. Set
 `TMUX_FLEET_REASONING_EFFORT` to pin effort; when absent Agent's configured effort
 remains in effect. Local
 credential-free providers must be explicitly pinned or have their endpoint
 configured (`OLLAMA_HOST` or `VLLM_BASE_URL`); discovery alone is not evidence
 that a local server is running.
 
+Successful construction and matching session info establish selection only:
+they do **not** prove authentication, endpoint reachability, model compatibility,
+deployment availability or account access to that model. No inference is
+performed during this preflight.
+
 Each invocation creates separate temporary working and session directories and
 an ephemeral session. Tools, skills and MCP servers are empty and approvals
 deny: judgment consumes only the context assembled by this tool. On timeout,
 cancellation is requested and the terminal result drained before close and
-directory cleanup. Failed or cancelled turns are never replayed automatically.
+directory cleanup. Session and agent close are both attempted; directories are
+removed only after both succeed. Failed or cancelled turns are never replayed
+automatically. A startup refusal also closes any constructed session and agent.
+Failed startup cleanup retains the directories, reports the cleanup failure on
+stderr and in exception notes, and preserves the original refusal or
+process-control exception.
 
 Run `tmux-fleet --help` — the model-backed verbs are marked there — then:
 
@@ -102,5 +127,7 @@ is missing:
 | --- | --- |
 | The public binding (`amplifier_agent`) is not importable | Reinstall the tool so `amplifier-agent` is present (`uv sync`). |
 | The selected provider's SDK is not installed | Install the matching extra, e.g. `pip install "tmux-fleet[anthropic]"`. |
-| No provider is configured (no credentials resolve, none pinned) | Export a provider key (e.g. `ANTHROPIC_API_KEY`) or pin `TMUX_FLEET_PROVIDER`. |
-| A pinned provider has no credentials in the environment | Export that provider's key, or unset `TMUX_FLEET_PROVIDER`. |
+| No provider is eligible for automatic selection | Configure a provider connection, or pin a registered `TMUX_FLEET_PROVIDER` and set `TMUX_FLEET_MODEL`. |
+| A pin is not registered | Use a provider ID from the public discovery listing named in the refusal. |
+| Public construction rejects the provider connection | Follow the public Agent remedy; discovery credential presence is advisory, not authentication. |
+| The public session pair differs from the requested selection | Set `TMUX_FLEET_MODEL` to a compatible model for the requested provider; no turn was submitted. |

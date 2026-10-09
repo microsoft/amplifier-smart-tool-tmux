@@ -50,17 +50,10 @@ def _provider_sdk_missing_hint(provider: str, detail: object = "") -> str:
 
 def _no_provider_hint() -> str:
     return (
-        "no AI provider is configured. Set ANTHROPIC_API_KEY (or another provider's "
-        f"credentials) and install its SDK, or pin {PROVIDER_ENV_VAR}. "
+        "no AI provider is eligible for automatic selection. Configure a provider "
+        f"and install its SDK, or pin a registered {PROVIDER_ENV_VAR} and set "
+        "TMUX_FLEET_MODEL. Discovery alone does not establish authentication. "
         "This tool never stores credentials."
-    )
-
-
-def _no_credentials_hint(provider: str) -> str:
-    return (
-        f"the provider {provider!r} pinned via {PROVIDER_ENV_VAR} has no resolvable "
-        "credentials. Set its credentials (e.g. ANTHROPIC_API_KEY for anthropic), "
-        f"or unset {PROVIDER_ENV_VAR}."
     )
 
 
@@ -72,14 +65,38 @@ def _load_engine():
     return amplifier_agent
 
 
-def _select_provider(resolvable: list[str], *, override: str | None) -> str:
+def _select_provider(
+    records: list[amplifier_agent.ProviderRecord], *, override: str | None
+) -> amplifier_agent.ProviderRecord:
     if override:
-        if override not in resolvable:
-            raise AgentUnavailable(_no_credentials_hint(override))
-        return override
+        record = next((r for r in records if r.provider == override), None)
+        if record is None:
+            raise AgentUnavailable(
+                f"Provider {override!r} pinned via {PROVIDER_ENV_VAR} is not registered. "
+                "Select one of the registered provider IDs: "
+                + ", ".join(r.provider for r in records)
+                + "."
+            )
+        # OAuth and identity construction can know more than advisory discovery.
+        return record
+    resolvable = [
+        r
+        for r in records
+        if r.credentials == "found"
+        or (
+            r.credentials == "not_required"
+            and (
+                (r.provider == "ollama" and os.environ.get("OLLAMA_HOST"))
+                or (r.provider == "vllm" and os.environ.get("VLLM_BASE_URL"))
+            )
+        )
+    ]
     if not resolvable:
         raise AgentUnavailable(_no_provider_hint())
-    return next((p for p in PROVIDER_PREFERENCE if p in resolvable), resolvable[0])
+    return next(
+        (r for p in PROVIDER_PREFERENCE for r in resolvable if r.provider == p),
+        resolvable[0],
+    )
 
 
 def _result_text(result: amplifier_agent.TurnResult) -> str:
@@ -182,8 +199,10 @@ class AgentSession:
     async def aclose(self) -> None:
         # A failed close retains the directories rather than deleting live state.
         with contextlib.redirect_stdout(sys.stderr):
-            await self._session.close()
-            await self._owner.close()
+            try:
+                await self._session.close()
+            finally:
+                await self._owner.close()
         shutil.rmtree(self._directory)
 
 
@@ -197,23 +216,8 @@ async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSes
             f"amplifier-agent discovery failed: {_public_error_detail(exc)}"
         ) from exc
     override = os.environ.get(PROVIDER_ENV_VAR, "").strip() or None
-    provider = _select_provider(
-        [
-            r.provider
-            for r in records
-            if r.credentials == "found"
-            or (
-                r.credentials == "not_required"
-                and (
-                    r.provider == override
-                    or (r.provider == "ollama" and os.environ.get("OLLAMA_HOST"))
-                    or (r.provider == "vllm" and os.environ.get("VLLM_BASE_URL"))
-                )
-            )
-        ],
-        override=override,
-    )
-    record = next(r for r in records if r.provider == provider)
+    record = _select_provider(records, override=override)
+    provider = record.provider
     if not record.installed:
         raise AgentUnavailable(_provider_sdk_missing_hint(provider))
     model = os.environ.get("TMUX_FLEET_MODEL", "").strip()
@@ -231,13 +235,13 @@ async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSes
     os.mkdir(working)
     os.mkdir(sessions)
     owner = None
+    session = None
     try:
         with contextlib.redirect_stdout(sys.stderr):
             owner = await api.create_agent(
                 api.AgentOptions(
-                    provider=provider,
-                    # Upstream v0.22.0 documents Anthropic as its default provider.
-                    # Preserve its configured/default model only for that provider.
+                    # Inherit the ambient pair intact unless the tool names both.
+                    provider=provider if model else None,
                     model=model or None,
                     reasoning_effort=os.environ.get("TMUX_FLEET_REASONING_EFFORT")
                     or None,
@@ -252,15 +256,48 @@ async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSes
             session = await owner.create_session(
                 api.SessionOptions(persistence="ephemeral")
             )
+            info = session.info
+            if info.provider != provider or (model and info.model != model):
+                requested_model = f" and model {model!r}" if model else ""
+                raise AgentUnavailable(
+                    f"amplifier-agent observed provider/model {info.provider!r}/{info.model!r}, "
+                    f"but tmux-fleet requested provider {provider!r}{requested_model}. "
+                    f"Set TMUX_FLEET_MODEL to a compatible model for {provider!r}; "
+                    "no turn was submitted."
+                )
     except BaseException as exc:
-        if owner is not None:
-            await owner.close()
-        shutil.rmtree(directory)
-        if isinstance(exc, asyncio.CancelledError):
+        cleanup_note = None
+        try:
+            with contextlib.redirect_stdout(sys.stderr):
+                try:
+                    if session is not None:
+                        await session.close()
+                finally:
+                    if owner is not None:
+                        await owner.close()
+            shutil.rmtree(directory)
+        except BaseException as cleanup_exc:  # noqa: BLE001 - preserve the original exception
+            cleanup_note = (
+                f"Startup cleanup failed; directories retained at {directory}: "
+                f"{type(cleanup_exc).__name__}: {cleanup_exc}"
+            )
+            exc.add_note(cleanup_note)
+            print(cleanup_note, file=sys.stderr)
+        if not isinstance(exc, Exception) or isinstance(exc, AgentUnavailable):
             raise
         if isinstance(exc, api.AgentError):
-            raise AgentUnavailable(
-                f"amplifier-agent startup refused: {_public_error_detail(exc)}"
-            ) from exc
-        raise AgentError(f"amplifier-agent failed to start: {exc}") from exc
+            escape_hatch = (
+                f" If you intended to override the ambient provider/model, set "
+                f"TMUX_FLEET_MODEL to a compatible model for {provider!r}."
+                if not model
+                else ""
+            )
+            refusal = AgentUnavailable(
+                f"amplifier-agent startup refused: {_public_error_detail(exc)}{escape_hatch}"
+            )
+        else:
+            refusal = AgentError(f"amplifier-agent failed to start: {exc}")
+        if cleanup_note is not None:
+            refusal.add_note(cleanup_note)
+        raise refusal from exc
     return AgentSession(api, owner, session, provider, directory)
