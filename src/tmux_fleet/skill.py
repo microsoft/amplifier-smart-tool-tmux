@@ -52,23 +52,12 @@ def skill_body() -> str:
         return f"(manifest unavailable: {exc})"
 
 
-def version() -> str | None:
-    """The manifest version, or None when the manifest cannot be read."""
-    try:
-        return manifest().version
-    except ManifestError:
-        return None
-
-
 def skill() -> str:
     """The skill, rendered."""
     lines = [f'<skill_content name="{NAME}">', f"Skill directory: {skill_directory()}"]
     source = repository()
     if source:
         lines.append(f"Repository: {source}")
-    tool_version = version()
-    if tool_version:
-        lines.append(f"Version: {tool_version}")
     lines += [
         "Relative paths in this skill are relative to the skill directory.",
         "",

@@ -4,12 +4,17 @@ terse and `--help` is that verb's complete listing. None of them are aliases."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import os
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
 
 import pytest
-from _helpers import scrub_providers
 
-from tmux_fleet import cli
+from tmux_fleet import __version__, cli
 from tmux_fleet.manifest import manifest
 from tmux_fleet.skill import skill, skill_directory, skill_resources
 
@@ -23,6 +28,82 @@ def _help_output(capsys, argv: list[str]) -> str:
     out = capsys.readouterr()
     assert out.err == "", f"{argv} wrote to stderr"
     return out.out
+
+
+@pytest.mark.parametrize("flag", ["-V", "--version"])
+@pytest.mark.parametrize(
+    "source_only", [False, True], ids=["installed", "source-fallback"]
+)
+def test_version_is_provider_free_with_closed_stdin(tmp_path, flag, source_only):
+    """Run the real CLI; source-only imports use real dependencies, not fakes."""
+    source = Path(__file__).resolve().parents[1] / "src"
+    paths = [str(source)]
+    expected_version = __version__
+    if source_only:
+        expected_version = tomllib.loads(
+            (source.parent / "pyproject.toml").read_text()
+        )["project"]["version"]
+        dependencies = tmp_path / "dependencies"
+        dependencies.mkdir()
+        for name in ("tmux_kit", "yaml"):
+            spec = importlib.util.find_spec(name)
+            assert spec is not None and spec.submodule_search_locations
+            (dependencies / name).symlink_to(
+                next(iter(spec.submodule_search_locations)), target_is_directory=True
+            )
+        paths.append(str(dependencies))
+    env = {
+        "HOME": str(tmp_path),
+        "PATH": str(Path(sys.executable).parent),
+        "PYTHONPATH": os.pathsep.join(paths),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    script = """
+import runpy
+import sys
+from importlib.metadata import PackageNotFoundError, version
+
+source_only = sys.argv.pop(1) == "source"
+if source_only:
+    try:
+        version("tmux-fleet")
+    except PackageNotFoundError:
+        pass
+    else:
+        raise AssertionError("source fallback still has installed metadata")
+try:
+    runpy.run_module("tmux_fleet.cli", run_name="__main__")
+finally:
+    assert not any(
+        name == "amplifier_agent" or name.startswith("amplifier_agent.")
+        for name in sys.modules
+    ), "version imported the model-backed Agent runtime"
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            *(["-S"] if source_only else []),
+            "-c",
+            script,
+            "source" if source_only else "installed",
+            flag,
+        ],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout == f"tmux-fleet {expected_version}\n"
+    assert result.stderr == ""
+
+
+def test_terse_help_lists_version_flags(capsys):
+    assert "-V" in _help_output(capsys, ["-h"])
+    assert "--version" in _help_output(capsys, ["-h"])
 
 
 def test_top_level_terse_help_exits_zero_on_stdout(capsys):
@@ -53,32 +134,6 @@ def test_the_skill_has_the_shape_of_an_agent_skill():
     assert "<skill_resources>\n" in rendered
     for path in skill_resources():
         assert f"  <file>{path}</file>\n" in rendered
-
-
-def test_the_skill_header_carries_the_manifest_version():
-    """`Version:` sits directly under `Repository:` and equals the manifest version."""
-    lines = skill().splitlines()
-    repo = next(i for i, line in enumerate(lines) if line.startswith("Repository: "))
-    assert lines[repo + 1] == f"Version: {manifest().version}"
-
-
-@pytest.mark.parametrize("flag", ["-V", "--version"])
-def test_version_flags_print_the_manifest_version(capsys, flag):
-    assert _help_output(capsys, [flag]) == f"tmux-fleet {manifest().version}\n"
-
-
-@pytest.mark.parametrize("flag", ["-V", "--version"])
-def test_version_needs_no_provider_and_no_tmux(capsys, monkeypatch, flag):
-    """An empty PATH leaves no tmux to find, so any tmux contact would fail."""
-    scrub_providers(monkeypatch)
-    monkeypatch.setenv("PATH", "")
-    assert _help_output(capsys, [flag]) == f"tmux-fleet {manifest().version}\n"
-
-
-def test_terse_help_names_the_version_flags(capsys):
-    terse = _help_output(capsys, ["-h"])
-    assert "`tmux-fleet -V`" in terse
-    assert "`tmux-fleet --version`" in terse
 
 
 def test_every_skill_resource_ships_inside_the_package():

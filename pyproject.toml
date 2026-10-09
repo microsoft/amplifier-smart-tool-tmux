@@ -1,6 +1,6 @@
 [project]
 name = "tmux-fleet"
-version = "0.3.1"
+version = "0.3.2"
 description = "A smart tool for tmux fleets: observe every session on a machine, and — only under explicit per-invocation confirmation — type into one or start one. Deterministic paths run with nothing configured; smart paths (triage, interpret) bring model-backed judgment through the embedded amplifier-agent engine."
 readme = "README.md"
 # amplifier-agent (the embedded engine) requires >=3.12; the floor is set to
@@ -16,16 +16,10 @@ dependencies = [
     # into this library (tmux_kit.labels was deleted upstream in 0.3.4 as app
     # policy) -- see tmux_fleet/harness.py.
     "tmux-kit>=0.8.0",
-    # amplifier-agent is the AI substrate, EMBEDDED (VISION section 3): the
-    # smart verbs import its PUBLIC library (amplifier_agent) in-process and
-    # take a single turn -- no CLI subprocess, no wrapper SDK, no PATH-resolved
-    # binary. It is a REGULAR dependency now (an install-story change from the
-    # 0.1.x SDK-spawn model), fetched by git URL because it is not on PyPI. The
-    # engine carries no credentials; provider keys arrive from the caller.
-    # v0.22.0 transitively installs several provider SDKs. The
-    # engine is imported LAZILY by the smart verbs only -- deterministic verbs
-    # and --help never touch it, so deterministic paths run with
-    # nothing configured. See tmux_fleet/agent.py.
+    # The supported in-process Python binding lives in packages/python. Track
+    # stable v0.22.0; uv.lock records the graph used for contributor qualification. The
+    # binding's declared engine/provider dependencies are installed normally.
+    # Import and construction remain lazy on model-backed paths only.
     "amplifier-agent @ git+https://github.com/microsoft/amplifier-agent@v0.22.0#subdirectory=packages/python",
     # SMART_TOOL.md frontmatter is YAML; the manifest accessor parses the copy
     # built into the tool. A tiny, ubiquitous, pure-Python dependency.
@@ -35,7 +29,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "playwright>=1.50"]
 mcp = ["mcp>=2.2,<3"]
-# Retained install aliases. v0.22.0 also installs these SDKs transitively.
+# Kept as compatible install aliases. The public Agent binding now declares its
+# engine/provider SDK dependencies; callers do not need an extra for normal use.
 anthropic = ["anthropic"]
 openai = ["openai"]
 

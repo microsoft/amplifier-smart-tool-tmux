@@ -7,8 +7,8 @@ Contract (cli.v1):
   emits a JSON error envelope ``{"error": {"code", "message", "remedy"}}``.
   Both go to stdout. Progress/diagnostics (there are none in normal operation)
   would go to stderr, never stdout. Self-description is the one thing on stdout
-  that is not JSON: ``-h``/``--help`` write plain text and exit 0, because help
-  is addressed to whoever is deciding how to call the tool, not a result.
+  that is not JSON: ``-h``/``--help`` and ``-V``/``--version`` write plain text
+  and exit 0, for whoever is deciding how to call the tool, not a result.
 * **Exit codes:** ``0`` success · ``2`` refusal (deny-by-default write, unknown
   session, bad argument, usage) · ``1`` read/agent failure.
 * **-h is a terse human summary; --help is the tool's skill**, rendered by the
@@ -31,6 +31,7 @@ import textwrap
 from typing import Any, NoReturn
 
 from tmux_fleet import (
+    __version__,
     agent,
     audit,
     creation,
@@ -44,7 +45,6 @@ from tmux_fleet import (
 # package `__init__` binds the ATTRIBUTE `tmux_fleet.manifest` to the accessor
 # FUNCTION, which IMPORT_FROM's getattr would return instead of the submodule.
 from tmux_fleet.manifest import ManifestError as _ManifestError
-from tmux_fleet.manifest import manifest as _manifest
 from tmux_fleet.manifest import manifest_dict as _manifest_dict
 from tmux_fleet.skill import skill
 from tmux_fleet.verbs import MODEL_BACKED_NOTE, VERB_BY_NAME, VERBS
@@ -204,29 +204,6 @@ class _SkillAction(argparse.Action):
         parser.exit(EXIT_OK)
 
 
-class _VersionAction(argparse.Action):
-    """Prints the manifest version and exits 0, mid-parse.
-
-    Firing during parsing returns before argparse demands a verb, so
-    ``tmux-fleet -V`` answers with nothing else on the command line.
-    """
-
-    def __init__(self, option_strings, dest=argparse.SUPPRESS, **kwargs):
-        super().__init__(
-            option_strings, dest, nargs=0, help="this tool's version", **kwargs
-        )
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        try:
-            version = _manifest().version
-        except _ManifestError as exc:
-            code, exit_code, remedy = _classify(exc)
-            _emit_error(code, str(exc), remedy)
-            parser.exit(exit_code)
-        sys.stdout.write(f"tmux-fleet {version}\n")
-        parser.exit(EXIT_OK)
-
-
 class _VerbHelpAction(argparse.Action):
     """Renders one verb's help and exits 0, mid-parse.
 
@@ -302,7 +279,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-h", action=_TerseHelpAction)
     parser.add_argument("--help", action=_SkillAction)
-    parser.add_argument("-V", "--version", action=_VersionAction)
+    parser.add_argument(
+        "-V", "--version", action="version", version=f"tmux-fleet {__version__}"
+    )
 
     sub = parser.add_subparsers(dest="command", required=True)
     socket_opt = _socket_dir_parent()

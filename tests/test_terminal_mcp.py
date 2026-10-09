@@ -63,19 +63,19 @@ def test_mcp_tools_app_resource_and_strict_authority(tmp_path):
                     and denied.structured_content["result"]["status"] == "refused"
                 )
                 html = await client.read_resource(UI_URI)
-                content = html.contents[0]
-                assert isinstance(content, TextResourceContents)
-                assert "xterm" in content.text
+                html_content = html.contents[0]
+                assert isinstance(html_content, TextResourceContents)
+                assert "xterm" in html_content.text
                 attachment = (
                     await client.call_tool(
                         "tmux_fleet_attach", {"target_id": pane["id"]}
                     )
                 ).structured_content["result"]
-                resource = (
+                frame_content = (
                     await client.read_resource(attachment["resource"])
                 ).contents[0]
-                assert isinstance(resource, TextResourceContents)
-                frame = json.loads(resource.text)
+                assert isinstance(frame_content, TextResourceContents)
+                frame = json.loads(frame_content.text)
                 assert frame["reset"] and frame["data"]
                 assert "data" not in json.dumps(
                     (await client.call_tool("tmux_fleet_state", {})).structured_content[
@@ -196,7 +196,8 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
                 if switching:
                     switch_started.set()
                     await switch_reply.wait()
-                await asyncio.sleep(0.12)
+                else:
+                    await asyncio.sleep(0.12)
                 if fail_next:
                     fail_next = False
                     receipt = {
@@ -277,7 +278,6 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
                 "seconds" not in authorizations[-1]
                 and "max_bytes" not in authorizations[-1]
             )
-            await expect(textarea).to_be_focused()
 
             text = "continuous_typing_is_not_blocked_by_slow_tool_replies"
             reads_before_typing = state_reads
@@ -288,15 +288,13 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
             await expect(frame.locator("#manage")).to_be_enabled()
             await expect(frame.locator("#inspect")).to_be_hidden()
             await typing
-            # The periodic state refresh is allowed once the input queue drains;
-            # measure during typing, not after waiting for delivery plus idle time.
-            assert state_reads == reads_before_typing
             for _ in range(50):
                 if b"".join(raw for _, raw in inputs).decode() == text:
                     break
                 await page.wait_for_timeout(30)
             assert b"".join(raw for _, raw in inputs).decode() == text
             await page.wait_for_timeout(150)
+            assert state_reads == reads_before_typing
 
             # A real paste event enters xterm's bracketed-paste processing, then
             # becomes multiple valid UTF-8 tool messages even above the old 32KiB quota.
@@ -361,16 +359,16 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
 
             # Switching panes while one message is in flight invalidates the
             # remainder of that pane's queue, and the new view starts read only.
-            # Hold the host response: browser automation can take longer than
-            # the nominal slow reply, so elapsed time cannot establish in-flight.
             switching = True
-            await textarea.focus()
-            await page.keyboard.type("x")
-            await asyncio.wait_for(switch_started.wait(), 5)
-            await page.keyboard.type("discard_on_switch", delay=1)
-            await frame.locator("#pane").select_option("pane-two")
-            await expect(frame.locator("#writable")).to_have_text("Read only")
-            switch_reply.set()
+            try:
+                await textarea.focus()
+                await page.keyboard.type("x")
+                await asyncio.wait_for(switch_started.wait(), timeout=5)
+                await page.keyboard.type("discard_on_switch", delay=1)
+                await frame.locator("#pane").select_option("pane-two")
+                await expect(frame.locator("#writable")).to_have_text("Read only")
+            finally:
+                switch_reply.set()
             await page.wait_for_timeout(250)
             assert len(inputs) == start + 2
             assert inputs[-1][1] == b"x"

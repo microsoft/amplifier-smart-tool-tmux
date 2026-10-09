@@ -17,3 +17,5 @@ build/
 evidence/*.out.txt
 
 node_modules/
+
+.work/

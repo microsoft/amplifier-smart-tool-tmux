@@ -32,7 +32,7 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
 3. **Model-backed verbs** — `triage` (fleet-wide: what needs attention and
    why, structured) and `interpret <session>` (what this session's state/output
    means, structured). These execute through the embedded amplifier-agent
-   engine library; invoked without a usable substrate (provider SDK extra not
+   public Python binding; invoked without a usable substrate (provider SDK extra not
    installed, no provider configured, or no credentials in the environment)
    they fail naming exactly which precondition is missing and how to fix it —
    **never** a silent fallback to a deterministic approximation.
@@ -106,3 +106,14 @@ it in a real drumbeat workspace · a worked example. DRAFT until all four.
   verbs `triage`/`interpret` on amplifier-agent). No implementation exists yet;
   the build lane implements against this and amends with evidence where reality
   pushes back.
+
+- **2026-10-03** — Smart verbs require an explicit `TMUX_FLEET_MODEL` (or
+  `AMPLIFIER_AGENT_MODEL`) for the selected provider. Missing selection refuses
+  before runtime construction. Package installation follows Agent main at
+  `packages/python`; the development lock records the tested revision.
+
+- **2026-10-09** — The public binding is pinned to stable Agent v0.22.0 at
+  `packages/python`. Public discovery distinguishes an unknown pin or missing
+  SDK from the Agent's own construction refusal. Explicit model selection for
+  every provider, its existing precedence, and loud/no-fallback semantics remain
+  unchanged; public error codes, categories and remedies are preserved.

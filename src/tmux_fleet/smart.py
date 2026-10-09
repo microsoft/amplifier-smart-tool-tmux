@@ -24,9 +24,23 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from typing import Any
 
 from tmux_fleet import agent, fleet
+
+
+async def _close_after_work(
+    session: agent.AgentSession, primary: BaseException | None
+) -> None:
+    """Cleanup must not replace the failure already propagating from a verb."""
+    try:
+        await session.aclose()
+    except BaseException as fault:
+        if primary is None:
+            raise
+        agent._cleanup_note(primary, session._tmpdir, fault, phase="Smart verb")
+
 
 # --------------------------------------------------------------------------
 # Parsing the model's answer back into structured data
@@ -94,7 +108,10 @@ def _attention_order(rows: list[dict[str, Any]], quiet_seconds: int) -> list[str
 
     ranked = sorted(
         rows,
-        key=lambda r: (_ATTENTION_BUCKETS.index(bucket(r)), -(r.get("idle_seconds") or 0)),
+        key=lambda r: (
+            _ATTENTION_BUCKETS.index(bucket(r)),
+            -(r.get("idle_seconds") or 0),
+        ),
     )
     return [r["session"] for r in ranked]
 
@@ -183,7 +200,9 @@ async def triage(
         # session count disagree with the session list, and the model (correctly)
         # spends its attention reconciling that data gap instead of triaging. So
         # the model gets every session, plus the heuristic ordering as a hint.
-        listing = await fleet.list_sessions(socket_dir=socket_dir, socket_name=socket_name)
+        listing = await fleet.list_sessions(
+            socket_dir=socket_dir, socket_name=socket_name
+        )
         rows = listing["sessions"]
         order = _attention_order(rows, quiet_seconds)
 
@@ -215,7 +234,7 @@ async def triage(
 
         raw = await session.submit(prompt, timeout_ms=timeout_ms)
     finally:
-        await session.aclose()
+        await _close_after_work(session, sys.exception())
 
     parsed = _extract_json(raw)
     if not isinstance(parsed, dict):
@@ -286,7 +305,7 @@ async def interpret(
 
         raw = await agent_session.submit(prompt, timeout_ms=timeout_ms)
     finally:
-        await agent_session.aclose()
+        await _close_after_work(agent_session, sys.exception())
 
     parsed = _extract_json(raw)
     if not isinstance(parsed, dict):

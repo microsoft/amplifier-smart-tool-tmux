@@ -1,8 +1,36 @@
-"""Single-turn, read-only judgment through the public Amplifier Agent API.
+"""The amplifier-agent substrate: how the smart verbs execute a model turn.
 
-Imports remain lazy: deterministic verbs require neither discovery nor an agent.
-Each invocation owns separate working and session directories. A cancelled turn
-is joined before closing the agent or deleting those directories; never replay it.
+Contractually (VISION section 3, cli.v1 rule 3), model-backed capabilities
+execute through **amplifier-agent's public Python binding**, imported IN-PROCESS. The
+tool's process is per-invocation and single-turn -- it is itself the isolation
+boundary, so there is no CLI subprocess between a verb and its embedded
+engine. This tool never carries provider credentials and never re-implements an
+agent loop. The binding and its declared engine/provider dependencies install
+together; provider keys arrive from the caller's environment at runtime.
+
+The public Python binding is imported lazily inside :func:`prepare_turn`.
+Deterministic verbs and help never import or initialize the agent. Explicit
+provider/model selection, an empty tool set and denied approvals bound execution.
+
+Refusal taxonomy (cli.v1 rule 3). A smart verb with no usable substrate FAILS
+naming exactly which precondition is missing -- **never** a silent fallback to a
+deterministic approximation. The five distinct preconditions, each with its own
+remedy:
+
+  1. **engine dependency missing** -- ``amplifier_agent`` is not importable
+     (the ``amplifier-agent`` package failed to install).
+  2. **provider SDK extra not installed** -- the chosen provider's SDK (e.g.
+     ``anthropic``) is not importable; repair the declared runtime dependencies.
+  3. **no provider configured** -- no provider has resolvable credentials and
+     none was pinned; set a provider key or pin ``TMUX_FLEET_PROVIDER``.
+  4. **public construction refusal** -- the pinned provider's public Agent
+     reports an authentication or configuration failure, with its own remedy.
+
+  5. **no model selected** -- set ``TMUX_FLEET_MODEL`` (or
+     ``AMPLIFIER_AGENT_MODEL``); there is no cross-provider model fallback.
+
+Cases 1-5 surface as :class:`AgentUnavailable`. A turn that ran and
+then failed (or returned nothing usable) is a distinct :class:`AgentError`.
 """
 
 from __future__ import annotations
@@ -13,54 +41,97 @@ import os
 import shutil
 import sys
 import tempfile
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import amplifier_agent
 
+#: Optional pin: force a specific provider short-name (e.g. ``anthropic``)
+#: instead of auto-selecting from whichever providers have resolvable
+#: credentials. Registered pins reach public construction even when discovery's
+#: credential observation is advisory (OAuth or Azure identity).
 PROVIDER_ENV_VAR = "TMUX_FLEET_PROVIDER"
+
+#: Auto-selection preference order, applied over the providers that actually
+#: have resolvable credentials. A resolvable provider outside this list is still
+#: usable (it is picked last, in the engine's own known order).
 PROVIDER_PREFERENCE = ("anthropic", "openai", "gemini", "azure-openai")
+
+#: The install extra that ships each provider's SDK, named in the taxonomy-case-2
+#: remedy. Providers absent here fall back to a generic hint.
+_PROVIDER_EXTRA = {
+    "anthropic": "anthropic",
+    "openai": "openai",
+}
+
+#: Default single-turn budget for a smart verb, in milliseconds. Triage and
+#: interpret are one turn each; generous enough for a real model round-trip,
+#: bounded so a hung turn surfaces as a failure rather than a hang. The timeout
+#: is OWNED HERE, wrapped around the turn -- there is no subprocess to bound.
 DEFAULT_TIMEOUT_MS = 180_000
 
 
 class AgentUnavailable(RuntimeError):
-    """A substrate precondition is missing."""
+    """A required substrate precondition is missing (taxonomy cases 1-5).
+
+    This is the fail-loud a smart verb raises INSTEAD of degrading to a
+    deterministic answer. Its message names the missing precondition and the
+    remedy.
+    """
 
 
 class AgentError(RuntimeError):
-    """A turn failed, timed out, or produced no usable output."""
+    """The engine ran but the turn failed, timed out, or produced no output."""
+
+
+# --------------------------------------------------------------------------
+# Refusal-hint builders -- one per taxonomy case. Each names the precondition
+# AND a concrete remedy (cli.v1 rule 3 / VISION principle 6).
+# --------------------------------------------------------------------------
 
 
 def _engine_missing_hint(detail: object = "") -> str:
+    suffix = f" ({detail})" if detail else ""
     return (
-        f"the amplifier-agent public library (amplifier_agent) could not be imported ({detail}). "
-        "Reinstall the tool with `uv sync`; deterministic verbs need none of this."
+        "the amplifier-agent public Python binding (amplifier_agent) could not be "
+        f"imported{suffix}. The engine is a regular dependency of this tool -- "
+        "its absence means the install is broken. Reinstall the tool (e.g. "
+        '`uv sync`, or `pip install "tmux-fleet[anthropic]"`) so amplifier-agent '
+        "is present. The deterministic verbs of this tool need none of this."
     )
 
 
 def _provider_sdk_missing_hint(provider: str, detail: object = "") -> str:
-    detail_suffix = f" ({detail})" if detail else ""
-    install = (
-        f'Install the matching extra with `pip install "tmux-fleet[{provider}]"`.'
-        if provider in ("anthropic", "openai")
-        else f"Install the SDK required by {provider!r} into the tool environment."
+    suffix = f" ({detail})" if detail else ""
+    extra = _PROVIDER_EXTRA.get(provider)
+    if extra:
+        install = (
+            f'install the matching extra: `pip install "tmux-fleet[{extra}]"` '
+            f'(or `uv add "tmux-fleet[{extra}]"`)'
+        )
+    else:
+        install = f"install the Python SDK the {provider!r} provider requires into this tool's environment"
+    return (
+        f"the {provider!r} provider was selected but its Python SDK is not "
+        f"installed{suffix}. Repair the declared runtime dependencies or {install}."
     )
-    return f"the {provider!r} provider SDK is not installed{detail_suffix}. {install}"
 
 
 def _no_provider_hint() -> str:
     return (
-        "no AI provider is eligible for automatic selection. Configure a provider "
-        f"and install its SDK, or pin a registered {PROVIDER_ENV_VAR} and set "
-        "TMUX_FLEET_MODEL. Discovery alone does not establish authentication. "
-        "This tool never stores credentials."
+        "no AI provider is configured for automatic selection. Configure a provider "
+        f"and its SDK, or pin a registered {PROVIDER_ENV_VAR} and set "
+        "TMUX_FLEET_MODEL. Discovery alone does not establish authentication. This tool never "
+        "stores credentials of its own. The deterministic verbs need none of this."
     )
 
 
+# The supported Python binding owns engine construction and provider validation.
+# No private engine or former CLI modules are imported by this adapter.
 def _load_engine():
     try:
         import amplifier_agent
-    except ImportError as exc:
+    except (ImportError, OSError) as exc:
         raise AgentUnavailable(_engine_missing_hint(exc)) from exc
     return amplifier_agent
 
@@ -68,6 +139,12 @@ def _load_engine():
 def _select_provider(
     records: list[amplifier_agent.ProviderRecord], *, override: str | None
 ) -> amplifier_agent.ProviderRecord:
+    """Choose the provider to run a turn through, or refuse naming why.
+
+    Discovery is advisory for explicit pins. Automatic selection requires an
+    installed SDK and found credentials, or an explicitly configured local endpoint.
+    The preference order is unchanged; the Agent owns authentication.
+    """
     if override:
         record = next((r for r in records if r.provider == override), None)
         if record is None:
@@ -77,76 +154,73 @@ def _select_provider(
                 + ", ".join(r.provider for r in records)
                 + "."
             )
-        # OAuth and identity construction can know more than advisory discovery.
         return record
     resolvable = [
         r
         for r in records
-        if r.credentials == "found"
-        or (
-            r.credentials == "not_required"
-            and (
-                (r.provider == "ollama" and os.environ.get("OLLAMA_HOST"))
-                or (r.provider == "vllm" and os.environ.get("VLLM_BASE_URL"))
+        if r.installed
+        and (
+            r.credentials == "found"
+            or (
+                r.credentials == "not_required"
+                and (
+                    (r.provider == "ollama" and os.environ.get("OLLAMA_HOST"))
+                    or (r.provider == "vllm" and os.environ.get("VLLM_BASE_URL"))
+                    or (
+                        r.provider == "chat-completions"
+                        and os.environ.get("CHAT_COMPLETIONS_BASE_URL")
+                    )
+                )
             )
         )
     ]
     if not resolvable:
         raise AgentUnavailable(_no_provider_hint())
-    return next(
-        (r for p in PROVIDER_PREFERENCE for r in resolvable if r.provider == p),
-        resolvable[0],
-    )
-
-
-def _result_text(result: amplifier_agent.TurnResult) -> str:
-    if result.state != "success":
-        error = result.error
-        detail = _public_error_detail(error) if error is not None else "no error detail"
-        raise AgentError(f"amplifier-agent turn {result.state}: {detail}")
-    text = "".join(part.text for part in result.content or [])
-    if not text.strip():
-        raise AgentError(
-            "amplifier-agent returned an empty result, not a structured answer."
-        )
-    return text
+    for preferred in PROVIDER_PREFERENCE:
+        for record in resolvable:
+            if record.provider == preferred:
+                return record
+    return resolvable[0]
 
 
 def _public_error_detail(error: amplifier_agent.AgentError) -> str:
-    """Keep the public actionable error contract, not merely Exception.__str__."""
     return f"{error.code} [{error.category}]: {error.message} Remedy: {error.remedy}"
 
 
-class AgentSession:
-    """An ephemeral session, owned agent and directories; exactly one submission."""
+def _cleanup_note(
+    error: BaseException,
+    directory: str,
+    fault: BaseException,
+    *,
+    phase: str = "Startup",
+) -> str:
+    note = (
+        f"{phase} cleanup failed; directories retained at {directory}: "
+        f"{type(fault).__name__}: {fault}"
+    )
+    error.add_note(note)
+    print(note, file=sys.stderr)
+    return note
 
-    def __init__(
-        self,
-        api,
-        owner: amplifier_agent.Agent,
-        session: amplifier_agent.Session,
-        provider: str,
-        directory: str,
-    ) -> None:
-        self._api = api
-        self._owner = owner
-        self._session = session
-        self.provider = provider
-        self._directory = directory
+
+class AgentSession:
+    """One ephemeral public Agent session; no implicit retries or tool authority."""
+
+    def __init__(self, api: Any, owner: Any, session: Any, provider: str, tmpdir: str):
+        self._api, self._owner, self._session = api, owner, session
+        self.provider, self._tmpdir = provider, tmpdir
         self._submitted = False
 
     async def submit(self, prompt: str, *, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> str:
         if self._submitted:
             raise AgentError(
-                "This single-turn session has already been submitted; do not replay."
+                "This single-turn session was already submitted; it cannot replay work."
             )
         self._submitted = True
         turn = None
         collector = None
 
-        async def collect(
-            active_turn: amplifier_agent.Turn,
-        ) -> amplifier_agent.TurnResult:
+        async def collect(active_turn):
             async for event in active_turn.events():
                 if event.type == "terminal":
                     if not isinstance(event.payload, self._api.TurnResult):
@@ -159,54 +233,82 @@ class AgentSession:
         try:
             with contextlib.redirect_stdout(sys.stderr):
                 turn = await self._session.start_turn(
-                    self._api.TurnInput(content=[self._api.TextPart(text=prompt)])
+                    self._api.TurnInput([self._api.TextPart(prompt)])
                 )
                 collector = asyncio.create_task(collect(turn))
                 result = await asyncio.wait_for(
-                    asyncio.shield(collector), max(timeout_ms, 1) / 1000
+                    asyncio.shield(collector),
+                    timeout=max(timeout_ms, 1) / 1000.0,
                 )
-                return _result_text(result)
         except (TimeoutError, asyncio.CancelledError) as exc:
-            if turn is not None:
-                # cancel() requests cancellation; consuming terminal joins it.
-                async def settle() -> None:
+
+            async def settle():
+                if turn is not None:
                     await turn.cancel()
                     if collector is not None:
                         await collector
 
-                draining = asyncio.create_task(settle())
-                while not draining.done():
-                    try:
-                        await asyncio.shield(draining)
-                    except asyncio.CancelledError:
-                        # A second caller cancellation cannot orphan the drain.
-                        continue
-                draining.result()
+            draining = asyncio.create_task(settle())
+            while not draining.done():
+                try:
+                    await asyncio.shield(draining)
+                except asyncio.CancelledError:
+                    continue
+            draining.result()
             if isinstance(exc, asyncio.CancelledError):
                 raise
-            raise AgentError(
-                f"amplifier-agent turn exceeded its {timeout_ms} ms budget; cancelled."
-            ) from exc
-        except AgentError:
-            raise
-        except self._api.AgentError as exc:
-            raise AgentError(
-                f"amplifier-agent turn failed: {_public_error_detail(exc)}"
-            ) from exc
+            failure = AgentError(
+                f"amplifier-agent turn exceeded its {timeout_ms} ms budget and was "
+                "cancelled. Inspect the failure; no retry was performed."
+            )
+            try:
+                await self.aclose()
+            except BaseException as fault:  # noqa: BLE001 - preserve the timeout and retain failed cleanup state
+                _cleanup_note(failure, self._tmpdir, fault, phase="Turn")
+            raise failure from exc
         except Exception as exc:
-            raise AgentError(f"amplifier-agent turn failed: {exc}") from exc
+            detail = (
+                _public_error_detail(cast("amplifier_agent.AgentError", exc))
+                if isinstance(exc, self._api.AgentError)
+                else f"{type(exc).__name__}: {exc}"
+            )
+            raise AgentError(f"amplifier-agent turn failed: {detail}") from exc
+        if result.state != "success" or result.error is not None:
+            error = result.error
+            detail = _public_error_detail(error) if error else result.state
+            raise AgentError(
+                f"amplifier-agent turn did not succeed: {detail}"
+            ) from error
+        reply = "".join(
+            part.text
+            for part in result.content or []
+            if isinstance(part, self._api.TextPart)
+        )
+        if not reply.strip():
+            raise AgentError(
+                "amplifier-agent returned an empty result; no structured answer was produced."
+            )
+        return reply
 
     async def aclose(self) -> None:
-        # A failed close retains the directories rather than deleting live state.
+        if self._owner is None:
+            return
+        owner = self._owner
         with contextlib.redirect_stdout(sys.stderr):
             try:
                 await self._session.close()
             finally:
-                await self._owner.close()
-        shutil.rmtree(self._directory)
+                await owner.close()
+        shutil.rmtree(self._tmpdir)
+        self._owner = None
 
 
 async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSession:
+    """Construct a credentialed, explicitly selected, tool-free ephemeral agent.
+
+    The optional cwd is retained for API compatibility but grants no filesystem
+    access. Storage always lives in a fresh tool-owned temporary directory.
+    """
     api = _load_engine()
     try:
         with contextlib.redirect_stdout(sys.stderr):
@@ -215,37 +317,38 @@ async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSes
         raise AgentUnavailable(
             f"amplifier-agent discovery failed: {_public_error_detail(exc)}"
         ) from exc
-    override = os.environ.get(PROVIDER_ENV_VAR, "").strip() or None
-    record = _select_provider(records, override=override)
+    record = _select_provider(
+        records,
+        override=os.environ.get(PROVIDER_ENV_VAR, "").strip() or None,
+    )
     provider = record.provider
     if not record.installed:
         raise AgentUnavailable(_provider_sdk_missing_hint(provider))
-    model = os.environ.get("TMUX_FLEET_MODEL", "").strip()
-    if not model and provider != "anthropic":
+    model = (
+        os.environ.get("TMUX_FLEET_MODEL")
+        or os.environ.get("AMPLIFIER_AGENT_MODEL")
+        or ""
+    ).strip()
+    if not model:
         raise AgentUnavailable(
-            f"Provider {provider!r} requires an explicit compatible model: set "
-            "TMUX_FLEET_MODEL to a model supported by that provider. Agent v0.22.0 "
-            "does not guarantee its ambient/default model matches the selected provider; "
-            "tmux-fleet will not guess or silently use a different provider's model."
+            "No model is selected. Set TMUX_FLEET_MODEL (or AMPLIFIER_AGENT_MODEL) "
+            f"to an exact model available through {provider!r}. Selecting a provider "
+            "does not select a matching model; no fallback was used."
         )
-    directory = tempfile.mkdtemp(prefix="tmux-fleet-agent-")
-    root = directory
-    working = os.path.join(root, "working")
-    sessions = os.path.join(root, "sessions")
+    tmpdir = tempfile.mkdtemp(prefix="tmux-fleet-agent-")
     owner = None
     session = None
     try:
+        working = os.path.join(tmpdir, "working")
+        sessions = os.path.join(tmpdir, "sessions")
         os.mkdir(working)
         os.mkdir(sessions)
         with contextlib.redirect_stdout(sys.stderr):
             owner = await api.create_agent(
                 api.AgentOptions(
-                    # Inherit the ambient pair intact unless the tool names both.
-                    provider=provider if model else None,
-                    model=model or None,
-                    reasoning_effort=os.environ.get("TMUX_FLEET_REASONING_EFFORT")
-                    or None,
-                    working_directory=str(cwd) if cwd is not None else working,
+                    provider=provider,
+                    model=model,
+                    working_directory=working,
                     sessions_directory=sessions,
                     tools=[],
                     skills=[],
@@ -257,16 +360,15 @@ async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSes
                 api.SessionOptions(persistence="ephemeral")
             )
             info = session.info
-            if info.provider != provider or (model and info.model != model):
-                requested_model = f" and model {model!r}" if model else ""
+            if info.provider != provider or info.model != model:
                 raise AgentUnavailable(
                     f"amplifier-agent observed provider/model {info.provider!r}/{info.model!r}, "
-                    f"but tmux-fleet requested provider {provider!r}{requested_model}. "
-                    f"Set TMUX_FLEET_MODEL to a compatible model for {provider!r}; "
-                    "no turn was submitted."
+                    f"but tmux-fleet requested {provider!r}/{model!r}. "
+                    "Set TMUX_FLEET_MODEL to a compatible model; no turn was submitted."
                 )
+        return AgentSession(api, owner, session, provider, tmpdir)
     except BaseException as exc:
-        cleanup_note = None
+        note = None
         try:
             with contextlib.redirect_stdout(sys.stderr):
                 try:
@@ -275,29 +377,21 @@ async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSes
                 finally:
                     if owner is not None:
                         await owner.close()
-            shutil.rmtree(directory)
-        except BaseException as cleanup_exc:  # noqa: BLE001 - preserve the original exception
-            cleanup_note = (
-                f"Startup cleanup failed; directories retained at {directory}: "
-                f"{type(cleanup_exc).__name__}: {cleanup_exc}"
-            )
-            exc.add_note(cleanup_note)
-            print(cleanup_note, file=sys.stderr)
+            shutil.rmtree(tmpdir)
+        except BaseException as fault:  # noqa: BLE001 - secondary cleanup must not replace the original
+            note = _cleanup_note(exc, tmpdir, fault)
         if not isinstance(exc, Exception) or isinstance(exc, AgentUnavailable):
             raise
-        if isinstance(exc, api.AgentError):
-            escape_hatch = (
-                f" If you intended to override the ambient provider/model, set "
-                f"TMUX_FLEET_MODEL to a compatible model for {provider!r}."
-                if not model
-                else ""
-            )
+        if isinstance(exc, ModuleNotFoundError):
+            refusal = AgentUnavailable(_provider_sdk_missing_hint(provider, exc))
+        elif isinstance(exc, api.AgentError):
             refusal = AgentUnavailable(
-                f"amplifier-agent startup refused: {_public_error_detail(exc)}{escape_hatch}"
+                f"amplifier-agent startup refused: {_public_error_detail(exc)}"
             )
         else:
-            refusal = AgentError(f"amplifier-agent failed to start: {exc}")
-        if cleanup_note is not None:
-            refusal.add_note(cleanup_note)
+            refusal = AgentError(
+                f"amplifier-agent failed to construct a session ({type(exc).__name__})."
+            )
+        if note is not None:
+            refusal.add_note(note)
         raise refusal from exc
-    return AgentSession(api, owner, session, provider, directory)

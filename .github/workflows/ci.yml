@@ -4,7 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, fix/agent-workspace-compat-20261003]
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
   test-and-conform:

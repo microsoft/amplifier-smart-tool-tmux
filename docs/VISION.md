@@ -39,15 +39,13 @@ upstream as PRs.
 
 ### 3. amplifier-agent is the AI substrate — embedded, contractually
 
-Model-backed capabilities execute through **amplifier-agent's engine library**,
+Model-backed capabilities execute through **amplifier-agent's public Python binding**,
 imported in-process: the tool ships with its own AI capability built in, per
 the governing spec's own definition. The tool's process is per-invocation and
-single-turn — it is itself the isolation boundary, so no CLI subprocess and no
-wrapper SDK stand between a verb and the engine. The tool never carries
-provider credentials and never re-implements an agent loop; the engine is a
-regular dependency, a provider SDK arrives via an install extra (e.g.
-`tmux-fleet[anthropic]`), and provider keys arrive from the caller's
-environment at runtime. The engine is imported lazily by the smart verbs only:
+single-turn — it is itself the isolation boundary, so no CLI subprocess stands between a verb and its embedded engine. The tool never carries
+provider credentials and never re-implements an agent loop; the binding and its
+engine/provider dependencies are installed normally, and provider keys arrive
+from the caller's environment at runtime. The engine is imported lazily by the smart verbs only:
 deterministic paths and `--help` never touch it and run with nothing
 configured. A smart verb without a usable substrate fails naming exactly which
 precondition is missing.
@@ -111,3 +109,8 @@ fix it is a working feature; an empty result or bare stack trace is a defect.
   amplifier-agent as the contractually required AI substrate; `tmux-fleet` as
   the tool name; first-reference-implementation posture toward the upstream
   spec, including contributing its first conformance kit.
+
+- **2026-10-03** — Adopt the supported Agent Python package after its workspace
+  split removed the former engine/CLI imports. Explicit provider/model selection
+  replaces implicit provider-derived model defaults; ephemeral tool-free sessions
+  preserve the read-only reasoning boundary.
