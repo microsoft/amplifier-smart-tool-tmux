@@ -31,9 +31,9 @@ uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux@v0.2.
 
 Its regular dependencies include `tmux-kit>=0.8.0`; uv resolves and installs
 that dependency automatically. To use the
-model-backed verbs you additionally install the extra for your provider's SDK
-and supply that provider's credentials from your environment (the tool stores
-none):
+model-backed verbs supply your provider's credentials from the environment
+(the tool stores none). Agent v0.22.0 installs several SDKs transitively; the
+existing extra aliases remain available:
 
 ```
 uv tool install "git+<this repo>" --with anthropic   # or: pip install "tmux-fleet[anthropic]"

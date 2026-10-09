@@ -13,9 +13,9 @@ which — they never silently degrade to a deterministic guess.
 
 ## 1. Install a provider SDK (an extra)
 
-The engine talks to a model provider through that provider's Python SDK. To keep
-the base install lean, provider SDKs are **optional extras**, not core
-dependencies. Install the extra that matches the provider you intend to use:
+The pinned Agent v0.22.0 Python binding uses the public `amplifier_agent` API
+and installs several provider SDKs transitively (including Anthropic and OpenAI).
+The existing extra aliases remain supported:
 
 ```
 uv add "tmux-fleet[anthropic]"      # Anthropic
@@ -28,8 +28,8 @@ or, into an existing environment:
 pip install "tmux-fleet[anthropic]"
 ```
 
-Without the matching extra, a smart verb refuses with a message naming the exact
-extra to install (`tmux-fleet[<provider>]`).
+Public `list_providers()` discovery checks SDK availability and credentials
+before constructing an agent. A missing SDK still refuses with an install hint.
 
 ## 2. Provide credentials in the environment
 
@@ -57,6 +57,36 @@ fallback.
 
 ## Try it
 
+For Anthropic, the upstream configured/default model remains available without
+`TMUX_FLEET_MODEL`. Agent v0.22.0 documents Anthropic and `claude-sonnet-5-5` as
+its defaults in [configuration](https://github.com/microsoft/amplifier-agent/blob/v0.22.0/docs/configuration.md).
+For every non-default provider, `TMUX_FLEET_MODEL` is required and must name a
+model compatible with that provider. Agent does not automatically match its
+ambient/default model to a changed provider, so the tool refuses rather than
+guessing or silently running Anthropic. This is a migration requirement:
+
+```sh
+export TMUX_FLEET_PROVIDER=openai
+export OPENAI_API_KEY='your-key'
+export TMUX_FLEET_MODEL=gpt-5  # use an exact model available to your account
+export TMUX_FLEET_REASONING_EFFORT=low
+tmux-fleet triage
+```
+
+An explicit `TMUX_FLEET_MODEL` overrides `AMPLIFIER_AGENT_MODEL` and the Agent
+config/default model; the tool does not maintain a provider/model table. Set
+`TMUX_FLEET_REASONING_EFFORT` to pin effort; when absent Agent's configured effort
+remains in effect. Local
+credential-free providers must be explicitly pinned or have their endpoint
+configured (`OLLAMA_HOST` or `VLLM_BASE_URL`); discovery alone is not evidence
+that a local server is running.
+
+Each invocation creates separate temporary working and session directories and
+an ephemeral session. Tools, skills and MCP servers are empty and approvals
+deny: judgment consumes only the context assembled by this tool. On timeout,
+cancellation is requested and the terminal result drained before close and
+directory cleanup. Failed or cancelled turns are never replayed automatically.
+
 Run `tmux-fleet --help` — the model-backed verbs are marked there — then:
 
 ```
@@ -70,7 +100,7 @@ is missing:
 
 | Precondition missing | What to do |
 | --- | --- |
-| The engine dependency (`amplifier_agent_lib`) is not importable | Reinstall the tool so `amplifier-agent` is present (`uv sync`). |
+| The public binding (`amplifier_agent`) is not importable | Reinstall the tool so `amplifier-agent` is present (`uv sync`). |
 | The selected provider's SDK is not installed | Install the matching extra, e.g. `pip install "tmux-fleet[anthropic]"`. |
 | No provider is configured (no credentials resolve, none pinned) | Export a provider key (e.g. `ANTHROPIC_API_KEY`) or pin `TMUX_FLEET_PROVIDER`. |
 | A pinned provider has no credentials in the environment | Export that provider's key, or unset `TMUX_FLEET_PROVIDER`. |

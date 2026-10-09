@@ -39,13 +39,17 @@ from tmux_fleet import (
     smart,
     socket_resolution,
 )
+
 # Imported by symbol (not `import tmux_fleet.manifest as ...`) because the
 # package `__init__` binds the ATTRIBUTE `tmux_fleet.manifest` to the accessor
 # FUNCTION, which IMPORT_FROM's getattr would return instead of the submodule.
 from tmux_fleet.manifest import ManifestError as _ManifestError
+from tmux_fleet.manifest import manifest as _manifest
 from tmux_fleet.manifest import manifest_dict as _manifest_dict
 from tmux_fleet.skill import skill
-from tmux_fleet.verbs import MODEL_BACKED_NOTE, VERB_BY_NAME, VERBS, params as _params, usage as _usage
+from tmux_fleet.verbs import MODEL_BACKED_NOTE, VERB_BY_NAME, VERBS
+from tmux_fleet.verbs import params as _params
+from tmux_fleet.verbs import usage as _usage
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -91,7 +95,9 @@ def _verb_full_help(verb: dict[str, Any]) -> str:
         lines.append("MODEL-BACKED. This verb calls a model; it does not run on")
         lines.append("mechanically-collected data alone.")
     else:
-        lines.append("DETERMINISTIC. Runs correctly with no AI substrate configured at all.")
+        lines.append(
+            "DETERMINISTIC. Runs correctly with no AI substrate configured at all."
+        )
     lines += [
         "",
         "USAGE",
@@ -141,6 +147,7 @@ def _terse_help() -> str:
         "stdout with a non-zero exit (2 = refused, 1 = read/agent failure).",
         "Run `tmux-fleet --help` for this tool's skill, or",
         "`tmux-fleet VERB -h` / `tmux-fleet VERB --help` for one verb.",
+        "Run `tmux-fleet -V` / `tmux-fleet --version` for the installed version.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -177,19 +184,46 @@ class _EnvelopeArgumentParser(argparse.ArgumentParser):
 
 class _TerseHelpAction(argparse.Action):
     def __init__(self, option_strings, dest=argparse.SUPPRESS, **kwargs):
-        super().__init__(option_strings, dest, nargs=0, help="terse human summary", **kwargs)
+        super().__init__(
+            option_strings, dest, nargs=0, help="terse human summary", **kwargs
+        )
 
-    def __call__(self, parser, namespace, values, option_string=None):  # noqa: ANN001
+    def __call__(self, parser, namespace, values, option_string=None):
         sys.stdout.write(_terse_help())
         parser.exit(EXIT_OK)
 
 
 class _SkillAction(argparse.Action):
     def __init__(self, option_strings, dest=argparse.SUPPRESS, **kwargs):
-        super().__init__(option_strings, dest, nargs=0, help="this tool's skill", **kwargs)
+        super().__init__(
+            option_strings, dest, nargs=0, help="this tool's skill", **kwargs
+        )
 
-    def __call__(self, parser, namespace, values, option_string=None):  # noqa: ANN001
+    def __call__(self, parser, namespace, values, option_string=None):
         sys.stdout.write(skill())
+        parser.exit(EXIT_OK)
+
+
+class _VersionAction(argparse.Action):
+    """Prints the manifest version and exits 0, mid-parse.
+
+    Firing during parsing returns before argparse demands a verb, so
+    ``tmux-fleet -V`` answers with nothing else on the command line.
+    """
+
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, **kwargs):
+        super().__init__(
+            option_strings, dest, nargs=0, help="this tool's version", **kwargs
+        )
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        try:
+            version = _manifest().version
+        except _ManifestError as exc:
+            code, exit_code, remedy = _classify(exc)
+            _emit_error(code, str(exc), remedy)
+            parser.exit(exit_code)
+        sys.stdout.write(f"tmux-fleet {version}\n")
         parser.exit(EXIT_OK)
 
 
@@ -202,12 +236,16 @@ class _VerbHelpAction(argparse.Action):
     still reach ``_EnvelopeArgumentParser.error`` and exit 2.
     """
 
-    def __init__(self, option_strings, dest=argparse.SUPPRESS, *, verb, render, **kwargs):  # noqa: ANN001
-        super().__init__(option_strings, dest, nargs=0, help=argparse.SUPPRESS, **kwargs)
+    def __init__(
+        self, option_strings, dest=argparse.SUPPRESS, *, verb, render, **kwargs
+    ):
+        super().__init__(
+            option_strings, dest, nargs=0, help=argparse.SUPPRESS, **kwargs
+        )
         self._verb = verb
         self._render = render
 
-    def __call__(self, parser, namespace, values, option_string=None):  # noqa: ANN001
+    def __call__(self, parser, namespace, values, option_string=None):
         sys.stdout.write(self._render(self._verb))
         parser.exit(EXIT_OK)
 
@@ -215,8 +253,12 @@ class _VerbHelpAction(argparse.Action):
 def _add_verb_help(parser: argparse.ArgumentParser, name: str) -> None:
     """Give one subcommand both levels of self-description."""
     verb = VERB_BY_NAME[name]
-    parser.add_argument("-h", action=_VerbHelpAction, verb=verb, render=_verb_terse_help)
-    parser.add_argument("--help", action=_VerbHelpAction, verb=verb, render=_verb_full_help)
+    parser.add_argument(
+        "-h", action=_VerbHelpAction, verb=verb, render=_verb_terse_help
+    )
+    parser.add_argument(
+        "--help", action=_VerbHelpAction, verb=verb, render=_verb_full_help
+    )
 
 
 def _socket_dir_parent() -> _EnvelopeArgumentParser:
@@ -260,6 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-h", action=_TerseHelpAction)
     parser.add_argument("--help", action=_SkillAction)
+    parser.add_argument("-V", "--version", action=_VersionAction)
 
     sub = parser.add_subparsers(dest="command", required=True)
     socket_opt = _socket_dir_parent()
@@ -313,16 +356,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_triage.add_argument(
         "--quiet-seconds", type=int, default=fleet.DEFAULT_QUIET_SECONDS
     )
-    p_triage.add_argument(
-        "--timeout-ms", type=int, default=agent.DEFAULT_TIMEOUT_MS
-    )
+    p_triage.add_argument("--timeout-ms", type=int, default=agent.DEFAULT_TIMEOUT_MS)
 
     p_interpret = verb("interpret")
     p_interpret.add_argument("session")
     p_interpret.add_argument("--lines", type=int, default=fleet.DEFAULT_READ_LINES)
-    p_interpret.add_argument(
-        "--timeout-ms", type=int, default=agent.DEFAULT_TIMEOUT_MS
-    )
+    p_interpret.add_argument("--timeout-ms", type=int, default=agent.DEFAULT_TIMEOUT_MS)
 
     verb("manifest", socket_opts=False)
 
@@ -410,21 +449,45 @@ def _classify(exc: Exception) -> tuple[str, int, str | None]:
     if isinstance(exc, socket_resolution.SocketConfigError):
         return "socket_config", EXIT_REFUSED, "fix the socket configuration named above"
     if isinstance(exc, creation.CreateRefused):
-        return "refused", EXIT_REFUSED, "re-run with --confirmed if you genuinely intend it"
+        return (
+            "refused",
+            EXIT_REFUSED,
+            "re-run with --confirmed if you genuinely intend it",
+        )
     if isinstance(exc, creation.CreateFailed):
-        return "create_failed", EXIT_ERROR, "inspect the fleet with `tmux-fleet sessions`"
+        return (
+            "create_failed",
+            EXIT_ERROR,
+            "inspect the fleet with `tmux-fleet sessions`",
+        )
     if isinstance(exc, agent.AgentUnavailable):
-        return "agent_unavailable", EXIT_ERROR, "install and configure amplifier-agent (see message)"
+        return (
+            "agent_unavailable",
+            EXIT_ERROR,
+            "install and configure amplifier-agent (see message)",
+        )
     if isinstance(exc, agent.AgentError):
-        return "agent_error", EXIT_ERROR, "inspect amplifier-agent (try `amplifier-agent doctor`)"
+        return (
+            "agent_error",
+            EXIT_ERROR,
+            "inspect amplifier-agent (try `amplifier-agent doctor`)",
+        )
     if isinstance(exc, _ManifestError):
-        return "manifest", EXIT_ERROR, "the tool's own SMART_TOOL.md is malformed or missing"
+        return (
+            "manifest",
+            EXIT_ERROR,
+            "the tool's own SMART_TOOL.md is malformed or missing",
+        )
     if isinstance(exc, audit.AuditError):
         return "audit", EXIT_ERROR, "make the audit log path writable (see message)"
     if isinstance(exc, fleet.FleetError):
         if refused:
             return "refused", EXIT_REFUSED, None
-        return "fleet", EXIT_ERROR, "run `tmux-fleet socket` to check which socket is being read"
+        return (
+            "fleet",
+            EXIT_ERROR,
+            "run `tmux-fleet socket` to check which socket is being read",
+        )
     if isinstance(exc, socket_resolution.SocketNotInstalledError):  # pragma: no cover
         return "internal", EXIT_ERROR, None
     return "error", EXIT_ERROR, None

@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from _helpers import scrub_providers
 
 from tmux_fleet import cli
 from tmux_fleet.manifest import manifest
@@ -38,7 +39,10 @@ def test_the_skill_has_the_shape_of_an_agent_skill():
     assert rendered.startswith('<skill_content name="tmux-fleet">\n')
     assert rendered.rstrip("\n").endswith("</skill_content>")
     assert f"Skill directory: {skill_directory()}\n" in rendered
-    assert "Repository: https://github.com/microsoft/amplifier-smart-tool-tmux\n" in rendered
+    assert (
+        "Repository: https://github.com/microsoft/amplifier-smart-tool-tmux\n"
+        in rendered
+    )
     assert "\n# tmux-fleet\n" in rendered
     assert manifest().body in rendered
     assert "\n## Capabilities\n" in rendered
@@ -49,6 +53,32 @@ def test_the_skill_has_the_shape_of_an_agent_skill():
     assert "<skill_resources>\n" in rendered
     for path in skill_resources():
         assert f"  <file>{path}</file>\n" in rendered
+
+
+def test_the_skill_header_carries_the_manifest_version():
+    """`Version:` sits directly under `Repository:` and equals the manifest version."""
+    lines = skill().splitlines()
+    repo = next(i for i, line in enumerate(lines) if line.startswith("Repository: "))
+    assert lines[repo + 1] == f"Version: {manifest().version}"
+
+
+@pytest.mark.parametrize("flag", ["-V", "--version"])
+def test_version_flags_print_the_manifest_version(capsys, flag):
+    assert _help_output(capsys, [flag]) == f"tmux-fleet {manifest().version}\n"
+
+
+@pytest.mark.parametrize("flag", ["-V", "--version"])
+def test_version_needs_no_provider_and_no_tmux(capsys, monkeypatch, flag):
+    """An empty PATH leaves no tmux to find, so any tmux contact would fail."""
+    scrub_providers(monkeypatch)
+    monkeypatch.setenv("PATH", "")
+    assert _help_output(capsys, [flag]) == f"tmux-fleet {manifest().version}\n"
+
+
+def test_terse_help_names_the_version_flags(capsys):
+    terse = _help_output(capsys, ["-h"])
+    assert "`tmux-fleet -V`" in terse
+    assert "`tmux-fleet --version`" in terse
 
 
 def test_every_skill_resource_ships_inside_the_package():

@@ -75,6 +75,8 @@ piping CLI output.
 uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux
 ```
 
+To upgrade, run `uv tool upgrade tmux-fleet`.
+
 `tmux` must be on PATH; every verb is a tmux client. The model-backed verbs also need
 a provider SDK, installed as an extra (`tmux-fleet[anthropic]` or `tmux-fleet[openai]`),
 and that provider's credentials in the environment. `doctor` reports what this host

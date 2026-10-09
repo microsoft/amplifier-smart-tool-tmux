@@ -12,6 +12,7 @@ from tmux_fleet.terminal import TerminalFleet
 
 pytest.importorskip("mcp")
 from mcp import Client
+from mcp.types import TextResourceContents
 
 from tmux_fleet.mcp import UI_URI, create_server
 
@@ -30,7 +31,9 @@ def test_live_input_queue():
 def test_mcp_tools_app_resource_and_strict_authority(tmp_path):
     async def check():
         async with fleet("fixture") as (_, kw):
-            library = TerminalFleet(tmp_path, **kw)
+            library = TerminalFleet(
+                tmp_path, socket_dir=kw["socket_dir"], socket_name=kw["socket_name"]
+            )
             async with Client(create_server(library)) as client:
                 listed = await client.list_tools()
                 tools = {tool.name: tool for tool in listed.tools}
@@ -40,7 +43,9 @@ def test_mcp_tools_app_resource_and_strict_authority(tmp_path):
                     ]
                     == "boolean"
                 )
-                assert tools["tmux_fleet_fleet"].annotations.read_only_hint
+                annotations = tools["tmux_fleet_fleet"].annotations
+                assert annotations is not None
+                assert annotations.read_only_hint
                 result = await client.call_tool("tmux_fleet_fleet", {})
                 pane = result.structured_content["result"]["panes"][0]
                 denied = await client.call_tool(
@@ -58,17 +63,19 @@ def test_mcp_tools_app_resource_and_strict_authority(tmp_path):
                     and denied.structured_content["result"]["status"] == "refused"
                 )
                 html = await client.read_resource(UI_URI)
-                assert "xterm" in html.contents[0].text
+                content = html.contents[0]
+                assert isinstance(content, TextResourceContents)
+                assert "xterm" in content.text
                 attachment = (
                     await client.call_tool(
                         "tmux_fleet_attach", {"target_id": pane["id"]}
                     )
                 ).structured_content["result"]
-                frame = json.loads(
-                    (await client.read_resource(attachment["resource"]))
-                    .contents[0]
-                    .text
-                )
+                resource = (
+                    await client.read_resource(attachment["resource"])
+                ).contents[0]
+                assert isinstance(resource, TextResourceContents)
+                frame = json.loads(resource.text)
                 assert frame["reset"] and frame["data"]
                 assert "data" not in json.dumps(
                     (await client.call_tool("tmux_fleet_state", {})).structured_content[
@@ -133,6 +140,9 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
         fail_next = False
         current_attachment = None
         state_reads = 0
+        switch_reply = asyncio.Event()
+        switch_started = asyncio.Event()
+        switching = False
 
         def result(value):
             return {"content": [], "structuredContent": {"result": value}}
@@ -183,6 +193,9 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
                 assert len(raw) <= 4096
                 raw.decode("utf-8", errors="strict")
                 inputs.append((args, raw))
+                if switching:
+                    switch_started.set()
+                    await switch_reply.wait()
                 await asyncio.sleep(0.12)
                 if fail_next:
                     fail_next = False
@@ -264,6 +277,7 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
                 "seconds" not in authorizations[-1]
                 and "max_bytes" not in authorizations[-1]
             )
+            await expect(textarea).to_be_focused()
 
             text = "continuous_typing_is_not_blocked_by_slow_tool_replies"
             reads_before_typing = state_reads
@@ -274,13 +288,15 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
             await expect(frame.locator("#manage")).to_be_enabled()
             await expect(frame.locator("#inspect")).to_be_hidden()
             await typing
+            # The periodic state refresh is allowed once the input queue drains;
+            # measure during typing, not after waiting for delivery plus idle time.
+            assert state_reads == reads_before_typing
             for _ in range(50):
                 if b"".join(raw for _, raw in inputs).decode() == text:
                     break
                 await page.wait_for_timeout(30)
             assert b"".join(raw for _, raw in inputs).decode() == text
             await page.wait_for_timeout(150)
-            assert state_reads == reads_before_typing
 
             # A real paste event enters xterm's bracketed-paste processing, then
             # becomes multiple valid UTF-8 tool messages even above the old 32KiB quota.
@@ -303,6 +319,7 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
 
             # Browser copy events and the Copy button work without Async Clipboard.
             screen = await frame.locator(".xterm-screen").bounding_box()
+            assert screen is not None
             await page.mouse.dblclick(screen["x"] + 40, screen["y"] + 8)
             copied = await textarea.evaluate("""el => {
                 const data = new DataTransfer();
@@ -344,12 +361,16 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
 
             # Switching panes while one message is in flight invalidates the
             # remainder of that pane's queue, and the new view starts read only.
+            # Hold the host response: browser automation can take longer than
+            # the nominal slow reply, so elapsed time cannot establish in-flight.
+            switching = True
             await textarea.focus()
             await page.keyboard.type("x")
-            await page.wait_for_timeout(30)
+            await asyncio.wait_for(switch_started.wait(), 5)
             await page.keyboard.type("discard_on_switch", delay=1)
             await frame.locator("#pane").select_option("pane-two")
             await expect(frame.locator("#writable")).to_have_text("Read only")
+            switch_reply.set()
             await page.wait_for_timeout(250)
             assert len(inputs) == start + 2
             assert inputs[-1][1] == b"x"
@@ -479,11 +500,11 @@ def test_official_app_bridge_live_terminal_drafts_receipts_theme_and_mobile(tmp_
                 original_guarded = library._guarded
                 attempted_inputs = []
 
-                async def lose_input(row, argv):
-                    if argv[0] == "send-keys":
-                        attempted_inputs.append(argv)
+                async def lose_input(row, args):
+                    if args[0] == "send-keys":
+                        attempted_inputs.append(args)
                         raise RuntimeError("lost terminal dispatch response")
-                    return await original_guarded(row, argv)
+                    return await original_guarded(row, args)
 
                 library._guarded = lose_input
                 await frame.locator("#type").click()
