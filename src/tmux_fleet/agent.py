@@ -232,11 +232,11 @@ async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSes
     root = directory
     working = os.path.join(root, "working")
     sessions = os.path.join(root, "sessions")
-    os.mkdir(working)
-    os.mkdir(sessions)
     owner = None
     session = None
     try:
+        os.mkdir(working)
+        os.mkdir(sessions)
         with contextlib.redirect_stdout(sys.stderr):
             owner = await api.create_agent(
                 api.AgentOptions(

@@ -276,6 +276,36 @@ def observed_startup(monkeypatch, selection_env):
             rmtree(root)
 
 
+@pytest.mark.parametrize("failed_directory", ["working", "sessions"])
+def test_real_startup_directory_creation_failure_cleans_root(
+    monkeypatch, observed_startup, failed_directory
+):
+    roots, owners, *_ = observed_startup
+    mkdir = agent.os.mkdir
+
+    def fail_child_directory(path, *args, **kwargs):
+        if (
+            roots
+            and os.path.dirname(path) == roots[0]
+            and os.path.basename(path) == failed_directory
+        ):
+            raise OSError(f"{failed_directory} directory fault")
+        return mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(agent.os, "mkdir", fail_child_directory)
+
+    async def check():
+        with pytest.raises(
+            agent.AgentError, match=f"{failed_directory} directory fault"
+        ):
+            await agent.prepare_turn()
+        assert len(roots) == 1
+        assert owners == []
+        assert not os.path.exists(roots[0])
+
+    asyncio.run(check())
+
+
 def _ambient_pair(monkeypatch, tmp_path, source, provider, model):
     if source == "environment":
         monkeypatch.setenv("AMPLIFIER_AGENT_PROVIDER", provider)
