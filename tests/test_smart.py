@@ -38,6 +38,15 @@ def test_select_provider():
         agent._select_provider(["openai"], override="anthropic")
 
 
+def test_provider_sdk_missing_hint_only_includes_nonempty_detail():
+    hint = agent._provider_sdk_missing_hint("anthropic")
+    assert "not installed ()." not in hint
+    assert "not installed." in hint
+
+    hint = agent._provider_sdk_missing_hint("anthropic", "missing module")
+    assert "not installed (missing module)." in hint
+
+
 def test_engine_dependency_missing_is_named_refusal(monkeypatch):
     import builtins
 

@@ -39,12 +39,13 @@ def _engine_missing_hint(detail: object = "") -> str:
 
 
 def _provider_sdk_missing_hint(provider: str, detail: object = "") -> str:
+    detail_suffix = f" ({detail})" if detail else ""
     install = (
         f'Install the matching extra with `pip install "tmux-fleet[{provider}]"`.'
         if provider in ("anthropic", "openai")
         else f"Install the SDK required by {provider!r} into the tool environment."
     )
-    return f"the {provider!r} provider SDK is not installed ({detail}). {install}"
+    return f"the {provider!r} provider SDK is not installed{detail_suffix}. {install}"
 
 
 def _no_provider_hint() -> str:
