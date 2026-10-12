@@ -39,15 +39,17 @@ upstream as PRs.
 
 ### 3. amplifier-agent is the AI substrate — embedded, contractually
 
-Model-backed capabilities execute through **amplifier-agent's engine library**,
-imported in-process: the tool ships with its own AI capability built in, per
-the governing spec's own definition. The tool's process is per-invocation and
-single-turn — it is itself the isolation boundary, so no CLI subprocess and no
-wrapper SDK stand between a verb and the engine. The tool never carries
-provider credentials and never re-implements an agent loop; the engine is a
-regular dependency, a provider SDK arrives via an install extra (e.g.
-`tmux-fleet[anthropic]`), and provider keys arrive from the caller's
-environment at runtime. The engine is imported lazily by the smart verbs only:
+Model-backed capabilities execute through **amplifier-agent's supported public
+Python binding**, embedded in-process: the tool ships with its own AI capability
+built in, per the governing spec's own definition. The tool's process is
+per-invocation and single-turn, with no CLI subprocess or private-engine access.
+The tool never carries provider credentials and never re-implements an agent
+loop; the tagged Python binding is a regular dependency and owns its engine and
+provider dependencies. Provider credentials arrive from the caller's environment
+at runtime. Credential-based provider preference remains available; an explicit
+provider pin never silently falls through. Non-Anthropic selections require an
+explicit matching model rather than a guessed default. Smart turns have no tools,
+skills or MCP servers and deny approvals. The binding is imported lazily:
 deterministic paths and `--help` never touch it and run with nothing
 configured. A smart verb without a usable substrate fails naming exactly which
 precondition is missing.
@@ -89,6 +91,14 @@ fix it is a working feature; an empty result or bare stack trace is a defect.
 - **Capability that exists only in the CLI** — the library is the product.
 
 ## Changelog
+
+- **2026-10-12** — §3 amended with owner approval to use the supported public
+  Python binding. Evidence: amplifier-agent v0.20 replaced the old API entirely;
+  v0.22 publishes the binding from `packages/python`, while its language-binding
+  contract prohibits callers reaching directly into the engine. Direct private
+  imports and repository-root installation therefore cannot support the released
+  API. In-process one-shot execution, lazy loading, environment credentials,
+  mechanically assembled context and fail-loud behavior remain unchanged.
 
 - **2026-09-18** — §5 amended for a demonstrated collaborative terminal consumer:
   users and agents need to manage existing and new same-host sessions alongside

@@ -277,15 +277,14 @@ VERB_BY_NAME: dict[str, dict[str, Any]] = {v["name"]: v for v in VERBS}
 #: What the model-backed verbs need, and how they fail without it. Rendered
 #: into each model-backed verb's own --help.
 MODEL_BACKED_NOTE = [
-    "  These verbs execute through the amplifier-agent engine library, imported",
-    "  IN-PROCESS (no subprocess, no PATH-resolved binary). The engine ships as a",
-    "  dependency; a provider SDK arrives via an install extra (e.g.",
-    "  `tmux-fleet[anthropic]`) and provider credentials arrive from your",
-    "  environment -- this tool stores none. Invoked without a usable substrate",
-    "  they FAIL naming exactly which precondition is missing (engine dependency,",
-    "  provider SDK extra, no provider configured, or no credentials in the",
-    "  environment) and how to fix it -- never a silent fallback to a",
-    "  deterministic approximation.",
+    "  These verbs use amplifier-agent's public Python binding, lazily embedded",
+    "  IN-PROCESS (no subprocess or private engine imports). The tagged SDK owns",
+    "  provider dependencies; anthropic/openai extras are compatibility aliases.",
+    "  Credentials must arrive from your environment; saved logins are not used.",
+    "  TMUX_FLEET_PROVIDER and AMPLIFIER_AGENT_PROVIDER pins must agree.",
+    "  Set AMPLIFIER_AGENT_MODEL for non-Anthropic providers; only Anthropic",
+    "  defaults to claude-sonnet-5-5. Broken install, credentials, model or config",
+    "  FAIL with a remedy, never a deterministic fallback. No tools are granted.",
 ]
 
 

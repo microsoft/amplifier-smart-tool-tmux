@@ -7,7 +7,7 @@ classification, completeness contracts on every list, an attention rollup that
 refuses to present a heuristic as a verdict, deny-by-default input, harness
 classification (re-homed from the deleted ``tmux_kit.labels``), and the
 model-backed ``triage``/``interpret`` verbs executed through amplifier-agent's
-engine library, embedded in-process.
+supported public Python binding, embedded in-process.
 """
 
 from __future__ import annotations
