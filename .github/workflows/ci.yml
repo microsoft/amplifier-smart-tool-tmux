@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
       - name: Install tmux (the tool is a tmux client; deterministic verbs need it)
         run: sudo apt-get update && sudo apt-get install -y tmux
@@ -69,7 +69,7 @@ jobs:
     container: python:3.13-bookworm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
       - name: Install isolated SDK gate prerequisites
         run: apt-get update && apt-get install -y tmux git
       - name: Real installed v0.22 public SDK gate
