@@ -16,19 +16,9 @@ dependencies = [
     # into this library (tmux_kit.labels was deleted upstream in 0.3.4 as app
     # policy) -- see tmux_fleet/harness.py.
     "tmux-kit>=0.8.0",
-    # amplifier-agent is the AI substrate, EMBEDDED (VISION section 3): the
-    # smart verbs import its engine LIBRARY (amplifier_agent_lib) in-process and
-    # take a single turn -- no CLI subprocess, no wrapper SDK, no PATH-resolved
-    # binary. It is a REGULAR dependency now (an install-story change from the
-    # 0.1.x SDK-spawn model), fetched by git URL because it is not on PyPI. The
-    # engine ships NO provider SDK of its own and carries NO credentials: a
-    # provider SDK arrives via an install extra below (e.g. `tmux-fleet[anthropic]`)
-    # and provider keys arrive from the caller's environment at runtime. The
-    # engine is imported LAZILY by the smart verbs only -- deterministic verbs
-    # and --help never touch it (importing amplifier_agent_lib mutates
-    # os.environ), so the tool still loads and runs its deterministic paths with
-    # nothing configured. See tmux_fleet/agent.py.
-    "amplifier-agent @ git+https://github.com/microsoft/amplifier-agent",
+    # Public binding only, imported lazily in-process. The released SDK owns
+    # engine/core/foundation/provider pins; credentials remain caller-env-only.
+    "amplifier-agent @ git+https://github.com/microsoft/amplifier-agent@v0.22.0#subdirectory=packages/python",
     # SMART_TOOL.md frontmatter is YAML; the manifest accessor parses the copy
     # built into the tool. A tiny, ubiquitous, pure-Python dependency.
     "pyyaml>=6.0",
@@ -37,15 +27,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "playwright>=1.50"]
 mcp = ["mcp>=2.2,<3"]
-# Provider SDKs are OPTIONAL EXTRAS, not core dependencies: the engine
-# dynamically imports a provider's SDK only when a smart verb actually runs a
-# turn through that provider. Install the extra matching the provider whose
-# credentials you supply -- e.g. `pip install "tmux-fleet[anthropic]"` (or
-# `uv add "tmux-fleet[anthropic]"`). Without the matching extra a smart verb
-# refuses loudly, naming the extra to install; the deterministic verbs never
-# need any of these.
-anthropic = ["anthropic"]
-openai = ["openai"]
+# Compatibility aliases: SDK now supplies these provider packages transitively.
+anthropic = []
+openai = []
 
 [project.urls]
 Repository = "https://github.com/microsoft/amplifier-smart-tool-tmux"

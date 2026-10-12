@@ -416,7 +416,7 @@ def _classify(exc: Exception) -> tuple[str, int, str | None]:
     if isinstance(exc, agent.AgentUnavailable):
         return "agent_unavailable", EXIT_ERROR, "install and configure amplifier-agent (see message)"
     if isinstance(exc, agent.AgentError):
-        return "agent_error", EXIT_ERROR, "inspect amplifier-agent (try `amplifier-agent doctor`)"
+        return "agent_error", EXIT_ERROR, "check provider connectivity, environment credentials and AMPLIFIER_AGENT_MODEL; see docs/installing-amplifier-agent.md"
     if isinstance(exc, _ManifestError):
         return "manifest", EXIT_ERROR, "the tool's own SMART_TOOL.md is malformed or missing"
     if isinstance(exc, audit.AuditError):

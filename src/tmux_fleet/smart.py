@@ -16,8 +16,8 @@ Both hold the four properties VISION section 4 demands of a smart path:
 * **Partial is failure.** A turn that returns nothing usable raises rather than
   returning half an answer.
 
-The model turn runs through amplifier-agent's engine library, imported
-in-process by ``agent.prepare_turn`` -- no CLI subprocess, no wrapper SDK.
+The model turn uses amplifier-agent's public Python binding, imported lazily
+in-process by ``agent.prepare_turn`` -- no CLI subprocess or private imports.
 """
 
 from __future__ import annotations
@@ -66,7 +66,6 @@ def _extract_json(text: str) -> Any:
     raise agent.AgentError(
         "amplifier-agent did not return parseable JSON. A smart verb's result "
         "must be structured; refusing to pass prose off as a structured answer. "
-        f"Raw model output (truncated): {text[:500]!r}"
     )
 
 
@@ -227,7 +226,7 @@ async def triage(
     return {
         "verb": "triage",
         "model_backed": True,
-        "executed_through": "amplifier-agent engine (embedded, in-process)",
+        "executed_through": "amplifier-agent public Python binding (embedded, in-process)",
         "provider": session.provider,
         "socket": listing["socket"],
         "server_running": listing["server_running"],
@@ -298,7 +297,7 @@ async def interpret(
     return {
         "verb": "interpret",
         "model_backed": True,
-        "executed_through": "amplifier-agent engine (embedded, in-process)",
+        "executed_through": "amplifier-agent public Python binding (embedded, in-process)",
         "provider": agent_session.provider,
         "socket": read["socket"],
         "session": session,

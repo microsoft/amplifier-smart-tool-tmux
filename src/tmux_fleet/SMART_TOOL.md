@@ -9,7 +9,8 @@ description: >
   Reach for it when a box is running many tmux sessions (agents, builds, REPLs,
   long jobs) and "what needs me right now?" is the question, or when something
   needs one keystroke or one new session delivered safely. The model-backed
-  verbs run through amplifier-agent's engine embedded in-process.
+  verbs run through amplifier-agent's public Python binding, lazily embedded
+  in-process.
 use_cases:
   - Survey every tmux session on a machine and see which are parked at a prompt
   - Triage a busy fleet to find which sessions plausibly need a human, and why
@@ -28,10 +29,11 @@ requires:
   - name: ai-provider
     purpose: >
       The model-backed verbs (triage, interpret) run through the amplifier-agent
-      engine, which is embedded in-process and ships as a regular dependency of
-      this tool — nothing to install separately. What they DO need is a provider:
-      a provider SDK, installed via an extra (e.g. `tmux-fleet[anthropic]`), plus
-      that provider's credentials in the environment. Optional: every
+      v0.22.0 public Python binding from packages/python, embedded in-process as
+      a tagged regular dependency. The SDK owns its engine and provider pins;
+      the anthropic/openai extras are no-op compatibility aliases. Supply
+      caller-environment credentials and an explicit model/deployment for
+      non-Anthropic providers. Optional: every
       deterministic verb (socket, sessions, attention, read, send, create,
       doctor, exit-code) works with no provider at all; only triage and interpret
       need one, and they fail loudly naming the missing precondition rather than
@@ -75,18 +77,44 @@ piping CLI output.
 uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux
 ```
 
-`tmux` must be on PATH; every verb is a tmux client. The model-backed verbs also need
-a provider SDK, installed as an extra (`tmux-fleet[anthropic]` or `tmux-fleet[openai]`),
-and that provider's credentials in the environment. `doctor` reports what this host
-has and what is missing.
+Python >=3.13 and `tmux` on PATH are required; every verb is a tmux client.
+The regular dependency is
+`amplifier-agent @ git+https://github.com/microsoft/amplifier-agent@v0.22.0#subdirectory=packages/python`.
+Its SDK owns transitive pins; `tmux-fleet[anthropic]` and `tmux-fleet[openai]`
+are no-op compatibility aliases, not mandatory provider installs.
+`doctor` checks tmux/socket prerequisites, not model authentication.
 
 ## Model-backed verbs
 
-`triage` and `interpret` run a single model turn through the amplifier-agent engine,
-embedded in-process. They consume tokens and may answer differently on a second run.
-Invoked without a usable substrate (provider SDK extra, provider configuration, or
-credentials) they fail naming exactly which precondition is missing, never falling
-back to a deterministic guess. Every other verb runs with nothing configured.
+`triage` and `interpret` lazily use public `amplifier_agent` for a single turn,
+embedded in-process, with no CLI subprocess or private-engine access. They consume
+tokens and may answer differently on a second run. Broken binding/provider installs,
+absent credentials, conflicting pins or missing models fail with a remedy, never a
+deterministic guess. Every other verb and help run without loading the binding.
+
+`TMUX_FLEET_PROVIDER` and `AMPLIFIER_AGENT_PROVIDER` may pin the provider; differing
+pins refuse. Otherwise caller-environment credential evidence prefers Anthropic,
+OpenAI, Gemini, Azure OpenAI, then other eligible public discovery records; a selected
+provider never silently falls through a broken install. Use `AMPLIFIER_AGENT_MODEL`
+exactly; absent it, only Anthropic defaults to `claude-sonnet-5-5`. Other providers
+require a matching model/deployment ID. Saved Copilot/ChatGPT logins and
+`not_required` local defaults are not credential sources. SDK file config does not
+select the pair here, but is still loaded and validated. See the installation guide
+for environment key alternatives and endpoint requirements.
+
+Turns use `tools=[]`, `skills=[]`, `mcp_servers=[]`, `approvals="deny"` and
+`additional_directories=[]`, with `SessionOptions(persistence="ephemeral")`.
+There is no public `agents=[]` option. Context is mechanically collected, not
+agent-directed fleet/file access. Owned temporary working and sessions directories
+are not a sandbox; caller-owned cwd is preserved and never deleted.
+
+The default turn deadline is 180 seconds plus a separate fixed **10-second total
+cleanup tail**, not 10 seconds per close. Public session cancellation/drain and
+close precede agent close and owned-state deletion. If safe shutdown cannot finish
+within the bound, report failure and retain state still in use. Ephemeral sessions
+still capture observations; local cleanup is not a no-forwarding guarantee.
+Deliberate SDK `context_intelligence.destinations` are honored without adding
+destinations or editing global settings.
 
 ## Worked invocations
 
@@ -122,7 +150,8 @@ caller's explicit target selection, not universal transaction safety.
 ## Reading more
 
 The repository's `docs/installing-tmux.md` and `docs/installing-amplifier-agent.md`
-cover the prerequisites; `contracts/cli.v1.md` is the frozen invocation surface.
+cover the prerequisites; `contracts/cli.v1.md` remains the deliberately un-frozen
+**DRAFT** invocation contract.
 
 ## Optional collaborative terminals
 

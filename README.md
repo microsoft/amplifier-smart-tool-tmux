@@ -8,12 +8,14 @@ under explicit per-invocation confirmation, types into one or starts one.
 Deterministic paths (`socket`, `sessions`, `attention`, `read`, `send`,
 `create`, `doctor`, `exit-code`) run with nothing configured. Smart paths
 (`triage`, `interpret`) bring model-backed judgment, executed through
-[amplifier-agent](https://github.com/microsoft/amplifier-agent)'s engine library
-**embedded in-process** — no subprocess, no PATH-resolved binary.
+[amplifier-agent](https://github.com/microsoft/amplifier-agent)'s supported public
+Python binding, lazily loaded and **embedded in-process** — no CLI subprocess,
+no PATH-resolved binary, no private-engine access.
 
 This repo is the first reference implementation of the
 [amplifier smart-tools spec](https://github.com/microsoft/amplifier-smart-tools).
 See `docs/VISION.md` and `contracts/cli.v1.md` for the governing design.
+The CLI contract remains **DRAFT**, deliberately held un-frozen.
 
 ## Install
 
@@ -21,28 +23,35 @@ See `docs/VISION.md` and `contracts/cli.v1.md` for the governing design.
 uv tool install git+<this repo>
 ```
 
-### Source release
+### Model-backed setup
 
-After the `v0.2.2` source tag is available, install that exact source release:
+Requires Python >=3.13 and `tmux` on PATH. Regular dependencies include
+`tmux-kit>=0.8.0` and the released public binding:
+
+```text
+amplifier-agent @ git+https://github.com/microsoft/amplifier-agent@v0.22.0#subdirectory=packages/python
+```
+
+The SDK owns its engine and provider dependency pins; no separate amplifier-agent
+binary is needed. The `anthropic` and `openai` extras remain **no-op compatibility
+aliases**, not required installs. Supply credentials from the caller's environment:
 
 ```
-uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux@v0.2.2
-```
-
-Its regular dependencies include `tmux-kit>=0.8.0`; uv resolves and installs
-that dependency automatically. To use the
-model-backed verbs you additionally install the extra for your provider's SDK
-and supply that provider's credentials from your environment (the tool stores
-none):
-
-```
-uv tool install "git+<this repo>" --with anthropic   # or: pip install "tmux-fleet[anthropic]"
+export TMUX_FLEET_PROVIDER=anthropic
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Extras available today: `anthropic`, `openai`. See
-[`docs/installing-amplifier-agent.md`](docs/installing-amplifier-agent.md) for
-provider configuration, the `TMUX_FLEET_PROVIDER` pin, and the refusal taxonomy.
+Conflicting `TMUX_FLEET_PROVIDER` / `AMPLIFIER_AGENT_PROVIDER` pins refuse.
+Without either pin, environment credential evidence selects Anthropic, OpenAI,
+Gemini, Azure OpenAI, then other eligible public discovery records. An explicit
+`AMPLIFIER_AGENT_MODEL` is used exactly; absent it, only Anthropic defaults to
+`claude-sonnet-5-5`. All non-Anthropic providers require a matching model
+(Azure uses a deployment ID). Saved logins and credential-free local defaults
+are not automatic credential sources. SDK file config is not the provider/model
+selector here, but the SDK still loads and validates it.
+
+See [`docs/installing-amplifier-agent.md`](docs/installing-amplifier-agent.md) for
+credential alternatives, endpoint requirements, and refusal remedies.
 
 ## Use
 
@@ -69,6 +78,21 @@ envelope (`{"error": {"code", "message", "remedy"}}`) on stdout with a non-zero
 exit; diagnostics go to stderr. Help is the one thing on stdout that is not a
 response: plain text, exit 0. The write verbs refuse without `--confirmed`.
 There is deliberately no verb that kills or renames a session.
+
+Smart verbs run one ephemeral turn with `tools=[]`, `skills=[]`,
+`mcp_servers=[]`, `approvals="deny"` and `additional_directories=[]`; context is
+collected mechanically, not by agent-directed fleet or file access. Owned temporary
+working and sessions directories are not a sandbox; caller-owned cwd is preserved.
+The default turn deadline is 180 seconds, with a separate, fixed **10-second total
+cleanup tail**: cancel/drain and close the public session, then close the agent,
+then remove owned state only after safe shutdown. A shutdown-bound failure is
+reported honestly and retains state still in use.
+
+**Ephemeral is not a no-capture or no-forwarding promise.** The SDK still writes
+observation captures; local temporary cleanup does not undo remote forwarding.
+Deliberate SDK `context_intelligence.destinations` are honored. This tool neither
+adds destinations nor edits global settings; review your SDK config before sending
+sensitive pane output.
 
 `send --text` defaults to one literal newline-free value: CR/LF text refuses
 before any input is delivered. For a target that supports bracketed paste, add
@@ -107,19 +131,25 @@ The smart-tools conformance kit belongs to the spec repo and is read from there,
 never vendored: a copy here would drift from the rules it claims to enforce.
 
 The kit does not install the tool under test, so `tmux-fleet` has to resolve on
-PATH before it runs:
+PATH before it runs. Run this smoke only inside an isolated container; use a
+fresh wheel install, not an editable checkout masking dependency resolution:
 
 ```
 git clone --depth 1 https://github.com/microsoft/amplifier-smart-tools /tmp/amplifier-smart-tools
-uv venv /tmp/tmux-fleet-kit
-uv pip install --python /tmp/tmux-fleet-kit/bin/python -e .
-PATH="/tmp/tmux-fleet-kit/bin:$PATH" \
+DIST="$(mktemp -d)"
+ENV="$(mktemp -d)"
+uv build --wheel --out-dir "$DIST"
+uv venv "$ENV"
+uv pip install --python "$ENV/bin/python" "$DIST"/*.whl
+PATH="$ENV/bin:$PATH" \
   python3 /tmp/amplifier-smart-tools/conformance/run.py . --timeout 60
 ```
 
 One JSON verdict document on stdout, a per-rule summary on stderr, exit 0 when
 no rule FAILs. CI runs the same kit against the staged distribution on every
-push.
+push. Also check installed `direct_url.json`, wheel `Requires-Dist` and SDK/engine
+versions as described in the installation guide; conformance alone is not
+installed-SDK or provenance proof.
 
 ## Contributing
 
