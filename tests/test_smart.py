@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+from concurrent.futures import Future, ThreadPoolExecutor
+import contextvars
 import json
 import logging
 import os
@@ -10,6 +12,7 @@ from pathlib import Path
 import subprocess
 import sys
 import textwrap
+import threading
 from types import SimpleNamespace as NS
 
 import pytest
@@ -332,6 +335,150 @@ def test_logging_prebound_handlers_and_exceptions_are_safe(capsys, stream):
     assert "fixture-response-secret" not in output.out + output.err
     assert "diagnostic omitted" in output.err
     assert "caller diagnostic unchanged" in output.out + output.err
+
+
+@pytest.mark.parametrize("worker_kind", ["thread", "executor", "to_thread"])
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_worker_diagnostics_context_boundary(capsys, caplog, worker_kind, stream):
+    """Synthetic emission characterizes context routing, not an installed SDK leak."""
+    watchdog = 5  # Test wait bound, not a product shutdown deadline.
+    env_secret = "synthetic-worker-env-secret"
+    response_secret = "synthetic-worker-response-secret"
+    caller_secret = "synthetic-caller-response-secret"
+    original_stdout, original_stderr = sys.stdout, sys.stderr
+    original_handle = logging.Logger.handle
+    original_factory = logging.getLogRecordFactory()
+    logger = logging.getLogger("fixture.worker_boundary")
+    original_level, original_propagate = logger.level, logger.propagate
+    handler = logging.StreamHandler(getattr(sys, stream))  # Prebound before scope.
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+    logger.addHandler(handler)
+    logger.addHandler(caplog.handler)
+    release = threading.Event()
+    owned_threads = []
+    pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="diagnostics-test")
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(pool)
+        started = loop.create_future()
+        scope_ready = asyncio.Event()
+        worker_handle = None
+        raw_thread = None
+
+        def emit():
+            loop.call_soon_threadsafe(started.set_result, threading.current_thread())
+            if not release.wait(watchdog):
+                raise TimeoutError("test worker release gate timed out")
+            for destination in (sys.stdout, sys.stderr):
+                destination.write("synthetic-worker-env-")
+                destination.flush()
+                destination.write("secret\n")
+                destination.flush()
+            logger.warning("worker response %s", response_secret)
+
+        async def protected():
+            nonlocal worker_handle, raw_thread
+            with agent._diagnostics({"TOKEN": env_secret}):
+                if worker_kind == "thread":
+                    completion = Future()
+
+                    def target():
+                        try:
+                            emit()
+                        except BaseException as exc:
+                            completion.set_exception(exc)
+                        else:
+                            completion.set_result(None)
+
+                    # Explicit empty contexts remain unpropagated even on runtimes
+                    # whose raw thread defaults might inherit the starting context.
+                    raw_thread = threading.Thread(
+                        target=contextvars.Context().run, args=(target,),
+                        name="diagnostics-raw-thread",
+                    )
+                    raw_thread.start()
+                    worker_handle = asyncio.wrap_future(completion)
+                elif worker_kind == "executor":
+                    worker_handle = loop.run_in_executor(
+                        pool, contextvars.Context().run, emit,
+                    )
+                else:
+                    worker_handle = asyncio.create_task(asyncio.to_thread(emit))
+                try:
+                    worker = await asyncio.wait_for(asyncio.shield(started), watchdog)
+                    owned_threads.append(worker)
+                    assert worker is not threading.current_thread() and worker.is_alive()
+                    scope_ready.set()
+                    await asyncio.wait_for(asyncio.shield(worker_handle), watchdog)
+                finally:
+                    # Drain before scope exit even when readiness/assertions fail.
+                    release.set()
+                    try:
+                        await asyncio.wait_for(asyncio.shield(worker_handle), watchdog)
+                    finally:
+                        if raw_thread is not None:
+                            raw_thread.join(watchdog)
+                            assert not raw_thread.is_alive()
+
+        task = asyncio.create_task(protected())
+        try:
+            await asyncio.wait_for(scope_ready.wait(), watchdog)
+            # This task has no diagnostics context, while the protected task and
+            # its real worker are both active. Even the same env value is unchanged.
+            print(f"caller {env_secret}")
+            sys.stderr.write(f"caller {env_secret}\n")
+            logger.warning("caller response %s", caller_secret)
+            release.set()
+            await asyncio.wait_for(asyncio.shield(task), watchdog)
+        finally:
+            release.set()
+            await asyncio.wait_for(asyncio.shield(task), watchdog)
+
+    try:
+        run(scenario())
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
+        logger.removeHandler(handler)
+        handler.close()
+        logger.removeHandler(caplog.handler)
+        logger.setLevel(original_level)
+        logger.propagate = original_propagate
+        assert sys.stdout is original_stdout and sys.stderr is original_stderr
+        assert logging.Logger.handle is original_handle
+        assert logging.getLogRecordFactory() is original_factory
+        assert all(not worker.is_alive() for worker in owned_threads)
+
+    output = capsys.readouterr()
+    caller_log = f"caller response {caller_secret}\n"
+    expected_out = f"caller {env_secret}\n" + (caller_log if stream == "stdout" else "")
+    expected_err = f"caller {env_secret}\n" + (caller_log if stream == "stderr" else "")
+    records = [rec for rec in caplog.records if rec.name == logger.name]
+    assert records[0].msg == "caller response %s"
+    assert records[0].args == (caller_secret,)
+    if worker_kind == "to_thread":
+        assert output.out == expected_out
+        assert output.err.startswith(expected_err)
+        assert output.err[len(expected_err):].startswith("[redacted]\n[redacted]\n")
+        assert output.err.count("diagnostic omitted") == 1
+        assert response_secret not in output.out + output.err
+        assert len(records) == 1  # Omitted before either prebound handler runs.
+    else:
+        # PASS here proves the boundary exists, NOT that SDK thread secrets are
+        # prevented: unpropagated workers intentionally retain caller-side routing.
+        worker_log = f"worker response {response_secret}\n"
+        assert output.out == expected_out + env_secret + "\n" + (
+            worker_log if stream == "stdout" else ""
+        )
+        assert output.err == expected_err + env_secret + "\n" + (
+            worker_log if stream == "stderr" else ""
+        )
+        assert len(records) == 2
+        assert records[1].msg == "worker response %s"
+        assert records[1].args == (response_secret,)
 
 
 @pytest.mark.parametrize("field,message,expected", [
