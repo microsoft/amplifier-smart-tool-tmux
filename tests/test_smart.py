@@ -307,12 +307,14 @@ def test_stderr_split_writes_never_leak(capsys):
     assert output.out == "" and output.err == "[redacted]\n"
 
 
-def test_logging_prebound_handlers_and_exceptions_are_safe(capsys):
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_logging_prebound_handlers_and_exceptions_are_safe(capsys, stream):
     logger = logging.getLogger("fixture.provider")
-    handler = logging.StreamHandler(sys.stderr)  # Deliberately before scope entry.
+    handler = logging.StreamHandler(getattr(sys, stream))  # Before scope entry.
     handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
     original = logging.getLogRecordFactory()
+    original_handle = logging.Logger.handle
     try:
         with agent._diagnostics({}):  # Unknown response secret, not an env key.
             try:
@@ -324,10 +326,12 @@ def test_logging_prebound_handlers_and_exceptions_are_safe(capsys):
     finally:
         logger.removeHandler(handler)
     assert logging.getLogRecordFactory() is original
+    assert logging.Logger.handle is original_handle
     output = capsys.readouterr()
-    assert not output.out and "fixture-response-secret" not in output.err
+    assert output.out == ("caller diagnostic unchanged\n" if stream == "stdout" else "")
+    assert "fixture-response-secret" not in output.out + output.err
     assert "diagnostic omitted" in output.err
-    assert "caller diagnostic unchanged" in output.err
+    assert "caller diagnostic unchanged" in output.out + output.err
 
 
 @pytest.mark.parametrize("field,message,expected", [
@@ -469,6 +473,7 @@ def test_overlapping_sdk_diagnostic_scopes(capsys):
 def test_overlapping_diagnostics_restore_stderr_and_logging(capsys):
     original_stream = sys.stderr
     original_factory = logging.getLogRecordFactory()
+    original_handle = logging.Logger.handle
     async def scenario():
         first, second = asyncio.Event(), asyncio.Event()
         async def a():
@@ -492,6 +497,7 @@ def test_overlapping_diagnostics_restore_stderr_and_logging(capsys):
     run(scenario())
     assert sys.stderr is original_stream
     assert logging.getLogRecordFactory() is original_factory
+    assert logging.Logger.handle is original_handle
     output = capsys.readouterr()
     assert "synthetic-secret" not in output.err
     assert "A [redacted]" in output.err and "B [redacted]" in output.err

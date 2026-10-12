@@ -192,14 +192,16 @@ def test_real_explicit_non_anthropic_pair_and_file_override(monkeypatch, tmp_pat
     run(scenario())
 
 
-@pytest.mark.parametrize("config_text,match", [
-    (None, "Create the file selected by AMPLIFIER_AGENT_CONFIG"),
-    ("{broken fixture-api-key", "valid JSON object"),
-    ("[]", "valid JSON object"),
-    ('{"fixture-api-key": true}', "Remove unregistered top-level settings"),
-    ('{"reasoning_effort": "fixture-api-key"}', "AMPLIFIER_AGENT_REASONING_EFFORT"),
+@pytest.mark.parametrize("config_text,cwd_case,match", [
+    (None, None, "Create the file selected by AMPLIFIER_AGENT_CONFIG"),
+    ("{broken fixture-api-key", None, "valid JSON object"),
+    ("[]", None, "valid JSON object"),
+    ('{"fixture-api-key": true}', None, "Remove unregistered top-level settings"),
+    ('{"reasoning_effort": "fixture-api-key"}', None, "AMPLIFIER_AGENT_REASONING_EFFORT"),
+    ("{}", "missing", "existing directory via cwd"),
+    ("{}", "file", "existing directory via cwd"),
 ])
-def test_real_refusals_and_config_validation(monkeypatch, tmp_path, config_text, match):
+def test_real_refusals_and_config_validation(monkeypatch, tmp_path, config_text, cwd_case, match):
     async def scenario():
         monkeypatch.setenv("AMPLIFIER_AGENT_PROVIDER", "openai")
         with pytest.raises(agent.AgentUnavailable, match="conflicts"):
@@ -217,8 +219,11 @@ def test_real_refusals_and_config_validation(monkeypatch, tmp_path, config_text,
         if config_text is not None:
             config.write_text(config_text)
         monkeypatch.setenv("AMPLIFIER_AGENT_CONFIG", str(config))
+        cwd = tmp_path / "fixture-api-key" if cwd_case else None
+        if cwd_case == "file":
+            cwd.write_text("not a directory")
         with pytest.raises(agent.AgentUnavailable, match=match) as exc:
-            await agent.prepare_turn()
+            await agent.prepare_turn(cwd=cwd)
         assert "fixture-api-key" not in str(exc.value)
         assert str(config) not in str(exc.value)
     run(scenario())

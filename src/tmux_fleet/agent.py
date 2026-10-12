@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import contextvars
+import functools
 import io
 import logging
 import os
@@ -154,6 +155,7 @@ def _input_remedy(error: Any) -> str:
         "reasoning_effort": "Set reasoning_effort / AMPLIFIER_AGENT_REASONING_EFFORT to none, minimal, low, medium, high, xhigh or max, or omit it; use an effort supported by the selected model.",
         "provider": "Set TMUX_FLEET_PROVIDER / AMPLIFIER_AGENT_PROVIDER to a registered provider.",
         "model": "Set AMPLIFIER_AGENT_MODEL to one nonempty matching model/deployment ID.",
+        "working_directory": "Pass an existing directory via cwd (not a file) when preparing the turn.",
         "sessions_directory": "Set sessions_directory / AMPLIFIER_AGENT_SESSIONS_DIRECTORY to a nonempty writable path.",
         "approvals": "Set host approvals / AMPLIFIER_AGENT_APPROVALS to allow or deny; this tool still explicitly denies approvals.",
         "extra_request_params": "Correct extra_request_params in the SDK config to a JSON object of supported request settings.",
@@ -249,8 +251,8 @@ class _StdoutRouter(io.TextIOBase):
     # lifecycle diagnostics use the text stream, not an interception bypass.
 
 
-class _SafeLogRecords:
-    """Sanitize before all handlers, including those holding an old stderr.
+class _SdkLogRouter:
+    """Omit payloads before handlers, even those holding old stdout/stderr.
 
     Raw SDK/provider response bodies are not useful safe diagnostics. Suppress
     their message/exception payload entirely, not just known environment keys.
@@ -261,13 +263,15 @@ class _SafeLogRecords:
         self.original = original
         self.users = 0
 
-    def __call__(self, *args, **kwargs):
-        record = self.original(*args, **kwargs)
-        if _stdout_sink.get() is not None:
-            record.msg = "amplifier-agent diagnostic omitted (raw SDK/provider logs may contain secrets)."
-            record.args = ()
-            record.exc_info = record.exc_text = record.stack_info = None
-        return record
+    def __get__(self, instance, owner):
+        return self if instance is None else functools.partial(self, instance)
+
+    def __call__(self, logger, record):
+        sink = _stdout_sink.get()
+        if sink is not None:
+            sink.write("amplifier-agent diagnostic omitted (raw SDK/provider logs may contain secrets).\n")
+            return
+        return self.original(logger, record)
 
 
 @contextlib.contextmanager
@@ -279,10 +283,10 @@ def _diagnostics(env: dict[str, str]):
     stderr = sys.stderr if isinstance(sys.stderr, _StdoutRouter) else _StdoutRouter(sys.stderr)
     sys.stderr = stderr
     stderr.users += 1
-    factory = logging.getLogRecordFactory()
-    factory = factory if isinstance(factory, _SafeLogRecords) else _SafeLogRecords(factory)
-    logging.setLogRecordFactory(factory)
-    factory.users += 1
+    logs = logging.Logger.handle
+    logs = logs if isinstance(logs, _SdkLogRouter) else _SdkLogRouter(logs)
+    logging.Logger.handle = logs
+    logs.users += 1
     token = _stdout_sink.set(sink)
     try:
         yield
@@ -294,9 +298,9 @@ def _diagnostics(env: dict[str, str]):
         stderr.users -= 1
         if not stderr.users and sys.stderr is stderr:
             sys.stderr = stderr.original
-        factory.users -= 1
-        if not factory.users and logging.getLogRecordFactory() is factory:
-            logging.setLogRecordFactory(factory.original)
+        logs.users -= 1
+        if not logs.users and logging.Logger.handle is logs:
+            logging.Logger.handle = logs.original
         # Diagnostics failure is secondary, never a replacement exception.
         with contextlib.suppress(OSError, ValueError):
             sink.finish(stderr.original)
