@@ -130,6 +130,31 @@ are omitted before handlers run, including handlers bound to an earlier stderr:
 provider response bodies can contain secrets not present in the environment.
 Unrelated caller tasks keep their own streams and logging records.
 
+Protection follows the SDK lifecycle **execution context**, including workers that
+propagate it, such as `asyncio.to_thread`. Workers without that context (for example,
+a raw `threading.Thread` or `loop.run_in_executor` run in an empty
+`contextvars.Context`) are **not intercepted**: their text and logging records keep
+caller-side routing and may expose secrets. This is not process-wide confidentiality
+or a blanket thread-safety guarantee; concurrent independent diagnostics-scope
+installation across threads is not promised.
+
+The focused worker characterization uses synthetic split environment-secret writes
+to stdout/stderr and a separate synthetic response-secret logged through handlers
+bound before scope entry. It is **not an observed installed-SDK leak**. Passing the
+unpropagated cases confirms the interception limit, not prevention of all SDK worker
+secrets. Bounded static SDK inspection found native completion threads but no explicit
+worker diagnostic dispatch; it cannot rule out logging in transitive packages.
+Re-run inside the isolated verification container with Python 3.13:
+
+```bash
+uv run --locked --extra dev --extra mcp pytest tests/test_smart.py -q -k worker_diagnostics_context_boundary
+```
+
+Maintain this context-propagation distinction when changing diagnostic routing;
+do not silence arbitrary caller output to imply a broader guarantee. The tests use
+event/future synchronization and drain owned workers even on failure; their wait
+bounds are watchdogs, not a product force-shutdown policy.
+
 The cleanup tail bounds the adapter's wait, not a force-stop of Python or an
 arbitrary SDK/provider that ignores public close. Supported delayed-provider
 shutdown is tested; an uncooperative SDK can still prevent its hosting event loop
