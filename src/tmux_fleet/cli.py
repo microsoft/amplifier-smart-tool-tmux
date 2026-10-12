@@ -7,7 +7,7 @@ Contract (cli.v1):
   emits a JSON error envelope ``{"error": {"code", "message", "remedy"}}``.
   Both go to stdout. Progress/diagnostics (there are none in normal operation)
   would go to stderr, never stdout. Self-description is the one thing on stdout
-  that is not JSON: ``-h``/``--help`` write plain text and exit 0, because help
+  that is not JSON: help and ``-V``/``--version`` write plain text and exit 0, because help
   is addressed to whoever is deciding how to call the tool, not a result.
 * **Exit codes:** ``0`` success · ``2`` refusal (deny-by-default write, unknown
   session, bad argument, usage) · ``1`` read/agent failure.
@@ -28,6 +28,7 @@ import asyncio
 import json
 import sys
 import textwrap
+from importlib.metadata import version
 from typing import Any, NoReturn
 
 from tmux_fleet import (
@@ -141,6 +142,7 @@ def _terse_help() -> str:
         "stdout with a non-zero exit (2 = refused, 1 = read/agent failure).",
         "Run `tmux-fleet --help` for this tool's skill, or",
         "`tmux-fleet VERB -h` / `tmux-fleet VERB --help` for one verb.",
+        "Run `tmux-fleet -V` / `tmux-fleet --version` for the installed tool version.",
     ]
     return "\n".join(lines) + "\n"
 
@@ -190,6 +192,15 @@ class _SkillAction(argparse.Action):
 
     def __call__(self, parser, namespace, values, option_string=None):  # noqa: ANN001
         sys.stdout.write(skill())
+        parser.exit(EXIT_OK)
+
+
+class _VersionAction(argparse.Action):
+    def __init__(self, option_strings, dest=argparse.SUPPRESS, **kwargs):
+        super().__init__(option_strings, dest, nargs=0, help="installed tool version", **kwargs)
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        sys.stdout.write(version("tmux-fleet") + "\n")
         parser.exit(EXIT_OK)
 
 
@@ -260,6 +271,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("-h", action=_TerseHelpAction)
     parser.add_argument("--help", action=_SkillAction)
+    parser.add_argument("-V", "--version", action=_VersionAction)
 
     sub = parser.add_subparsers(dest="command", required=True)
     socket_opt = _socket_dir_parent()
@@ -416,7 +428,7 @@ def _classify(exc: Exception) -> tuple[str, int, str | None]:
     if isinstance(exc, agent.AgentUnavailable):
         return "agent_unavailable", EXIT_ERROR, "install and configure amplifier-agent (see message)"
     if isinstance(exc, agent.AgentError):
-        return "agent_error", EXIT_ERROR, "inspect amplifier-agent (try `amplifier-agent doctor`)"
+        return "agent_error", EXIT_ERROR, "check provider connectivity, environment credentials and AMPLIFIER_AGENT_MODEL; see docs/installing-amplifier-agent.md"
     if isinstance(exc, _ManifestError):
         return "manifest", EXIT_ERROR, "the tool's own SMART_TOOL.md is malformed or missing"
     if isinstance(exc, audit.AuditError):

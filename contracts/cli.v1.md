@@ -22,8 +22,10 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
    every verb too (`tmux-fleet VERB -h` is terse; `tmux-fleet VERB --help` is
    the complete listing: arguments and their types, what it returns, whether it
    is model-backed), and neither requires that verb's own arguments. Help is
-   not an error: it goes to stdout and exits 0, and it is the only thing on
-   stdout that is not JSON.
+   not an error: it goes to stdout and exits 0. `-V` and `--version` print the
+   installed CLI tool's package version and exit 0 before requiring a command,
+   without loading the SDK or provider configuration. Help and version are
+   self-description, not JSON results.
 
 2. **Deterministic verbs** — run correctly with no AI substrate configured at
    all: `socket`, `sessions`, `attention`, `read`, `send`, `create`, `doctor`,
@@ -31,9 +33,10 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
 
 3. **Model-backed verbs** — `triage` (fleet-wide: what needs attention and
    why, structured) and `interpret <session>` (what this session's state/output
-   means, structured). These execute through the embedded amplifier-agent
-   engine library; invoked without a usable substrate (provider SDK extra not
-   installed, no provider configured, or no credentials in the environment)
+   means, structured). These execute through amplifier-agent's supported public
+   Python binding, embedded in-process with no tool authority; invoked without a
+   usable substrate (broken binding/provider installation, no provider configured,
+   required environment credentials absent, or no matching model selected)
    they fail naming exactly which precondition is missing and how to fix it —
    **never** a silent fallback to a deterministic approximation.
 
@@ -47,7 +50,7 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
    on stdout, failure emits a JSON error envelope
    `{"error": {"code", "message", "remedy"}}` on stdout and exits non-zero.
    Progress/diagnostics go to stderr, never stdout. Self-description (rule 1)
-   is the one thing on stdout that is not a result.
+   (help and version) is the one thing on stdout that is not a result.
 
 6. **Sockets are explicit.** Every underlying tmux invocation names its socket;
    ambient `$TMUX` / `TMUX_TMPDIR` are ignored, and `socket` reports what was
@@ -85,6 +88,19 @@ it in a real drumbeat workspace · a worked example. DRAFT until all four.
 - Exit-code taxonomy beyond zero/non-zero.
 
 ## Changelog
+
+- **2026-10-12** — Rules 1/5 amended within the approved canonical conformance
+  promise: add `-V` / `--version` self-description. Evidence: canonical
+  `spec/invocation.md` at smart-tools commit `14b6957` requires both flags;
+  its kit reported 16 PASS + 1 FAIL for their absence on the migration candidate
+  and original base. No new verbs, package version change or DRAFT freeze.
+
+- **2026-10-12** — Rule 3 amended with owner approval and VISION §3: use the
+  tagged public Python binding rather than removed engine internals. The binding
+  owns provider dependencies; legacy Anthropic/OpenAI extra names remain install
+  aliases. Non-Anthropic providers require an explicit model. Lazy deterministic
+  paths, one-shot execution, environment credentials and remedied refusals remain.
+  This amendment does not freeze the deliberately held DRAFT contract.
 
 - **2026-09-15** - Rule 1 amended to the upstream spec: top-level `--help` is
   the tool's skill (manifest body plus a generated verb list) rather than a
