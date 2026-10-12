@@ -31,9 +31,10 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
 
 3. **Model-backed verbs** — `triage` (fleet-wide: what needs attention and
    why, structured) and `interpret <session>` (what this session's state/output
-   means, structured). These execute through the embedded amplifier-agent
-   engine library; invoked without a usable substrate (provider SDK extra not
-   installed, no provider configured, or no credentials in the environment)
+   means, structured). These execute through amplifier-agent's supported public
+   Python binding, embedded in-process with no tool authority; invoked without a
+   usable substrate (broken binding/provider installation, no provider configured,
+   required environment credentials absent, or no matching model selected)
    they fail naming exactly which precondition is missing and how to fix it —
    **never** a silent fallback to a deterministic approximation.
 
@@ -85,6 +86,13 @@ it in a real drumbeat workspace · a worked example. DRAFT until all four.
 - Exit-code taxonomy beyond zero/non-zero.
 
 ## Changelog
+
+- **2026-10-12** — Rule 3 amended with owner approval and VISION §3: use the
+  tagged public Python binding rather than removed engine internals. The binding
+  owns provider dependencies; legacy Anthropic/OpenAI extra names remain install
+  aliases. Non-Anthropic providers require an explicit model. Lazy deterministic
+  paths, one-shot execution, environment credentials and remedied refusals remain.
+  This amendment does not freeze the deliberately held DRAFT contract.
 
 - **2026-09-15** - Rule 1 amended to the upstream spec: top-level `--help` is
   the tool's skill (manifest body plus a generated verb list) rather than a
