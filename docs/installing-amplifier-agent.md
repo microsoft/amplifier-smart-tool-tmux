@@ -125,6 +125,14 @@ If shutdown cannot finish within the tail, report failure honestly and retain
 state still in use; never delete live state or hide the primary failure behind a
 cleanup error. SDK diagnostics go to stderr so CLI stdout stays one JSON result.
 
+The cleanup tail bounds the adapter's wait, not a force-stop of Python or an
+arbitrary SDK/provider that ignores public close. Supported delayed-provider
+shutdown is tested; an uncooperative SDK can still prevent its hosting event loop
+from exiting. The library never adds a process-exit/kill workaround.
+If construction fails without returning a session handle, public agent close
+cannot certify cleanup of an unreturned runtime. The adapter closes what it owns,
+reports that limitation and conservatively retains its local state.
+
 **Ephemeral sessions still write observation captures.** Safe local cleanup does
 not promise no remote forwarding or provider retention. Deliberate SDK file
 configuration under `context_intelligence.destinations` is honored; tmux-fleet

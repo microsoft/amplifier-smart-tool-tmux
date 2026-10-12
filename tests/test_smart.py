@@ -234,7 +234,10 @@ def test_partial_construction_and_capture_failure(monkeypatch, tmp_path):
     monkeypatch.setattr(agent.tempfile, "mkdtemp", temp)
     with pytest.raises(agent.AgentUnavailable):
         run(agent.prepare_turn())
-    assert stages[-1] == "agent-close" and not roots[0].exists()
+    assert stages[-1] == "agent-close" and roots[0].exists()
+    # Failed factory returned no session; adapter cannot certify hidden SDK
+    # resource shutdown. This mock allocated none, so the test can remove it.
+    agent.shutil.rmtree(roots[0])
     fake_sdk(monkeypatch)
     async def broken_capture(**kw):
         raise ValueError("capture failed")
@@ -245,7 +248,7 @@ def test_partial_construction_and_capture_failure(monkeypatch, tmp_path):
 
 
 def test_cleanup_failure_retains_state_and_primary(monkeypatch):
-    fake_sdk(monkeypatch, close_error=True)
+    _, stages = fake_sdk(monkeypatch, close_error=True)
     async def scenario():
         owner = await agent.prepare_turn()
         try:
@@ -256,12 +259,13 @@ def test_cleanup_failure_retains_state_and_primary(monkeypatch):
         except ValueError as exc:
             assert "retained" in exc.__notes__[0]
         assert Path(owner._root).exists()
+        assert stages[-1] == "agent-close"
         # Mock resources no longer in use; test owns this retained path.
         agent.shutil.rmtree(owner._root)
     run(scenario())
 
 
-def test_cleanup_total_bound_retains_state(monkeypatch):
+def test_cleanup_total_bound_retains_state(monkeypatch, capsys):
     fake_sdk(monkeypatch)
     monkeypatch.setattr(agent, "CLEANUP_SECONDS", 0.02)
     async def scenario():
@@ -275,10 +279,144 @@ def test_cleanup_total_bound_retains_state(monkeypatch):
             await owner.aclose()
         assert asyncio.get_running_loop().time() - start < 0.2
         assert Path(owner._root).exists()
+        print("caller stdout after bounded return")
         release.set()
         await owner._close
         assert not Path(owner._root).exists()
     run(scenario())
+    assert capsys.readouterr().out == "caller stdout after bounded return\n"
+
+
+def test_split_writes_and_flushes_never_leak(capsys):
+    with agent._diagnostics({"ANTHROPIC_API_KEY": "synthetic-secret"}):
+        sys.stdout.write("synthetic-")
+        sys.stdout.flush()
+        sys.stdout.write("secret")
+        sys.stdout.flush()
+    output = capsys.readouterr()
+    assert output.out == "" and output.err == "[redacted]"
+
+
+def test_writelines_routes_to_safe_diagnostics(capsys):
+    with agent._diagnostics({"TOKEN": "synthetic-secret"}):
+        sys.stdout.writelines(["synthetic-", "secret\n"])
+    output = capsys.readouterr()
+    assert output.out == "" and output.err == "[redacted]\n"
+
+
+@pytest.mark.parametrize("close_fails", [False, True])
+def test_late_sdk_output_after_timeout_or_failed_close(monkeypatch, capsys, close_fails):
+    fake_sdk(monkeypatch)
+    async def scenario():
+        owner = await agent.prepare_turn()
+        release = asyncio.Event()
+        async def execute(value):
+            await release.wait()
+            print("late synthetic-secret")
+            if close_fails:
+                raise RuntimeError("late synthetic-secret")
+            return NS(state="success", error=None, content=[NS(text="{}")])
+        async def close_session():
+            if close_fails:
+                raise RuntimeError("synthetic-secret")
+            release.set()
+        owner._session.run = execute
+        owner._session.close = close_session
+        with pytest.raises(agent.AgentError, match="budget"):
+            await owner.submit("fixture", timeout_ms=1)
+        if close_fails:
+            with pytest.raises(agent.AgentError, match="retained"):
+                await owner.aclose()
+            print("caller after failure")
+            release.set()
+            await asyncio.gather(owner._run, return_exceptions=True)
+            # No live mock resource remains; this test owns retained state.
+            agent.shutil.rmtree(owner._root)
+        else:
+            await owner.aclose()
+    run(scenario())
+    output = capsys.readouterr()
+    assert output.out == ("caller after failure\n" if close_fails else "")
+    assert "late [redacted]" in output.err
+    assert "synthetic-secret" not in output.out + output.err
+
+
+def test_cancel_during_cleanup_preserves_cancel_even_on_failure(monkeypatch):
+    fake_sdk(monkeypatch)
+    async def scenario():
+        owner = await agent.prepare_turn()
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def blocked_close():
+            entered.set()
+            await release.wait()
+            raise RuntimeError("synthetic-secret")
+        owner._session.close = blocked_close
+        closing = asyncio.create_task(owner.aclose())
+        await entered.wait()
+        closing.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError) as exc:
+            await closing
+        assert "retained" in exc.value.__notes__[0]
+        assert Path(owner._root).exists()
+        agent.shutil.rmtree(owner._root)
+    run(scenario())
+
+
+@pytest.mark.parametrize("stage", ["discovery", "construction"])
+def test_cancel_during_startup_drains_owned_sdk_operation(monkeypatch, tmp_path, stage):
+    fake_sdk(monkeypatch)
+    sdk = agent._load_sdk()
+    roots = []
+    original = agent.tempfile.mkdtemp
+    def temp(**kw):
+        root = original(dir=tmp_path, **kw)
+        roots.append(Path(root))
+        return root
+    monkeypatch.setattr(agent.tempfile, "mkdtemp", temp)
+    async def scenario():
+        entered, release = asyncio.Event(), asyncio.Event()
+        original_operation = sdk.list_providers if stage == "discovery" else sdk.create_agent
+        async def delayed(options):
+            entered.set()
+            await release.wait()
+            return await original_operation(options)
+        if stage == "discovery":
+            sdk.list_providers = delayed
+        else:
+            sdk.create_agent = delayed
+        task = asyncio.create_task(agent.prepare_turn())
+        await entered.wait()
+        task.cancel()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert all(not root.exists() for root in roots)
+        assert len(asyncio.all_tasks()) == 1
+    run(scenario())
+
+
+def test_overlapping_sdk_diagnostic_scopes(capsys):
+    async def scenario():
+        first, second = asyncio.Event(), asyncio.Event()
+        async def a():
+            with agent._diagnostics({"TOKEN": "synthetic-secret"}):
+                first.set()
+                await second.wait()
+                print("A synthetic-secret")
+        async def b():
+            await first.wait()
+            with agent._diagnostics({"TOKEN": "synthetic-secret"}):
+                second.set()
+                await asyncio.sleep(0)
+                print("B synthetic-secret")
+        await asyncio.gather(a(), b())
+        print("caller")
+    run(scenario())
+    output = capsys.readouterr()
+    assert output.out == "caller\n"
+    assert "synthetic-secret" not in output.err
+    assert "A [redacted]" in output.err and "B [redacted]" in output.err
 
 
 def test_cli_refusal_envelope(monkeypatch, capsys):

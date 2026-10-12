@@ -1,7 +1,7 @@
 [project]
 name = "tmux-fleet"
 version = "0.3.1"
-description = "A smart tool for tmux fleets: observe every session on a machine, and — only under explicit per-invocation confirmation — type into one or start one. Deterministic paths run with nothing configured; smart paths (triage, interpret) bring model-backed judgment through the embedded amplifier-agent engine."
+description = "A smart tool for tmux fleets: observe every session on a machine, and — only under explicit per-invocation confirmation — type into one or start one. Deterministic paths run with nothing configured; smart paths (triage, interpret) use the embedded amplifier-agent public Python binding."
 readme = "README.md"
 # amplifier-agent (the embedded engine) requires >=3.12; the floor is set to
 # 3.13 to match the runtime the engine's own integration story validates on.

@@ -163,7 +163,7 @@ async def triage(
 
     Context (every session's sliver + the heuristic attention ordering) is
     assembled mechanically by ``attention``/``list_sessions``; the model is
-    asked only to judge it. Executes through the embedded amplifier-agent engine;
+    asked only to judge it. Executes through the embedded public Python binding;
     with no usable substrate this raises ``AgentUnavailable`` naming exactly which
     precondition is missing -- never a silent fallback.
     """
@@ -256,7 +256,7 @@ async def interpret(
     """[model-backed] What this session's state/output means, structured.
 
     The scrollback is captured mechanically by ``read``; the model is asked only
-    to interpret it. Executes through the embedded amplifier-agent engine; with no
+    to interpret it. Executes through the embedded public Python binding; with no
     usable substrate this raises ``AgentUnavailable`` naming exactly which
     precondition is missing.
     """

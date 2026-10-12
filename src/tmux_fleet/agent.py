@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import io
 import os
 from pathlib import Path
@@ -136,6 +137,7 @@ def _safe_error(error: Any, *, startup: bool = False) -> RuntimeError:
     code = getattr(error, "code", "")
     remedies = {
         "invalid_configuration": "Check the SDK host config and explicit provider/model settings.",
+        "invalid_input": "Check SDK host configuration and explicit provider/model/endpoint settings.",
         "selector_rejected": "Set AMPLIFIER_AGENT_MODEL to a model/deployment this provider accepts.",
         "engine_unavailable": "Repair the binding/provider install and caller environment credentials.",
         "provider_failed": "Check caller credentials, provider availability and model compatibility.",
@@ -162,6 +164,11 @@ class _Diagnostics(io.TextIOBase):
         return len(text)
 
     def flush(self) -> None:
+        # SDK flush boundaries must not split a secret across stderr writes.
+        # One-shot diagnostics are emitted only at the lifecycle boundary.
+        pass
+
+    def finish(self) -> None:
         text, self._buffer = self._buffer, ""
         for value in self._secrets:
             text = text.replace(value, "[redacted]")
@@ -169,14 +176,63 @@ class _Diagnostics(io.TextIOBase):
         sys.stderr.flush()
 
 
+_stdout_sink = contextvars.ContextVar("_tmux_fleet_sdk_stdout", default=None)
+
+
+class _StdoutRouter(io.TextIOBase):
+    """Overlapping SDK scopes restore once; unrelated tasks keep their stdout."""
+
+    def __init__(self, original):
+        self.original = original
+        self.users = 0
+
+    def write(self, text):
+        target = _stdout_sink.get()
+        return (target if target is not None else self.original).write(text)
+
+    def flush(self):
+        target = _stdout_sink.get()
+        return (target if target is not None else self.original).flush()
+
+    def writelines(self, lines):
+        for line in lines:
+            self.write(line)
+
+    @property
+    def encoding(self):
+        return self.original.encoding
+
+    @property
+    def errors(self):
+        return self.original.errors
+
+    def isatty(self):
+        return self.original.isatty()
+
+    def writable(self):
+        return True
+
+    # Raw descriptors/binary streams are deliberately not delegated: SDK
+    # lifecycle diagnostics use the text stream, not an interception bypass.
+
+
 @contextlib.contextmanager
 def _diagnostics(env: dict[str, str]):
     sink = _Diagnostics(env)
-    with contextlib.redirect_stdout(sink):
-        try:
-            yield
-        finally:
-            sink.flush()
+    router = sys.stdout if isinstance(sys.stdout, _StdoutRouter) else _StdoutRouter(sys.stdout)
+    sys.stdout = router
+    router.users += 1
+    token = _stdout_sink.set(sink)
+    try:
+        yield
+    finally:
+        _stdout_sink.reset(token)
+        router.users -= 1
+        if not router.users and sys.stdout is router:
+            sys.stdout = router.original
+        # Diagnostics failure is secondary, never a replacement exception.
+        with contextlib.suppress(OSError, ValueError):
+            sink.finish()
 
 
 class AgentSession:
@@ -191,6 +247,22 @@ class AgentSession:
         self._close: asyncio.Task | None = None
         self._close_deadline: float | None = None
         self._submitted = False
+        self._startup: asyncio.Task | None = None
+        self._uncertain = False
+
+    async def _construct(self, options: Any) -> None:
+        with _diagnostics(self._env):
+            await self._construct_resources(options)
+
+    async def _construct_resources(self, options: Any) -> None:
+        try:
+            self._agent = await self._sdk.create_agent(options)
+            self._session = await self._agent.create_session(self._sdk.SessionOptions(persistence="ephemeral"))
+        except BaseException:
+            # A failed public factory can allocate a runtime but return no handle.
+            # Agent.close alone cannot certify that unreturned runtime is drained.
+            self._uncertain = True
+            raise
 
     async def submit(self, prompt: str, *, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> str:
         if self._submitted or self._close is not None:
@@ -198,9 +270,8 @@ class AgentSession:
         self._submitted = True
         try:
             with _diagnostics(self._env):
-                self._run = asyncio.create_task(self._session.run(
-                    self._sdk.TurnInput(content=[self._sdk.TextPart(prompt)])
-                ))
+                self._run = asyncio.create_task(self._execute(prompt))
+                self._run.add_done_callback(lambda task: None if task.cancelled() else task.exception())
                 done, _ = await asyncio.wait({self._run}, timeout=max(timeout_ms, 1) / 1000)
                 if not done:
                     raise AgentError(
@@ -219,19 +290,48 @@ class AgentSession:
         except Exception as exc:
             raise _safe_error(exc) from None
 
+    async def _execute(self, prompt: str):
+        # This scope belongs to the operation, not the waiting caller. It stays
+        # alive through late SDK output after timeout or failed public close.
+        with _diagnostics(self._env):
+            return await self._session.run(
+                self._sdk.TurnInput(content=[self._sdk.TextPart(prompt)])
+            )
+
     async def _drain(self) -> None:
         with _diagnostics(self._env):
-            # Public session.close cancels/drains the independent SDK turn.
-            # Cancelling only the awaiting run coroutine would not do that.
-            if self._session is not None:
+            await self._drain_resources()
+
+    async def _drain_resources(self) -> None:
+        failed = False
+        if self._startup is not None:
+            await asyncio.gather(self._startup, return_exceptions=True)
+        # Public session.close cancels/drains the independent SDK turn. Attempt
+        # agent close even if session close raises; never remove uncertain state.
+        if self._session is not None:
+            try:
                 await self._session.close()
-            if self._run is not None:
-                await asyncio.gather(self._run, return_exceptions=True)
-            if self._agent is not None:
+            except BaseException:
+                failed = True
+        if self._agent is not None:
+            try:
                 await self._agent.close()
-        shutil.rmtree(self._root)
+            except BaseException:
+                failed = True
+        if failed or self._uncertain:
+            raise AgentError("Public SDK shutdown of partial/failed resources cannot be certified.")
+        if self._run is not None:
+            await asyncio.gather(self._run, return_exceptions=True)
+        # Safe drain established; deletion must not block the event-loop deadline.
+        await asyncio.to_thread(shutil.rmtree, self._root)
 
     async def aclose(self) -> None:
+        # Task-local routing means bounded return never captures unrelated
+        # caller stdout, even when an uncooperative SDK close is still active.
+        with _diagnostics(self._env):
+            await self._aclose()
+
+    async def _aclose(self) -> None:
         primary = sys.exception()
         loop = asyncio.get_running_loop()
         if self._close is None:
@@ -239,7 +339,7 @@ class AgentSession:
             self._close = asyncio.create_task(self._drain())
             self._close.add_done_callback(lambda task: None if task.cancelled() else task.exception())
         failure = None
-        interrupted = False
+        interrupted = None
         while not self._close.done():
             remaining = max(0.0, self._close_deadline - loop.time())
             if not remaining:
@@ -247,8 +347,8 @@ class AgentSession:
                 break
             try:
                 await asyncio.wait({self._close}, timeout=remaining)
-            except asyncio.CancelledError:
-                interrupted = True  # Drain without resetting the budget.
+            except asyncio.CancelledError as exc:
+                interrupted = exc  # Drain without resetting the budget.
         if self._close.done():
             if self._close.cancelled() or self._close.exception() is not None:
                 failure = "public SDK close or local cleanup failed"
@@ -257,13 +357,20 @@ class AgentSession:
                 f"amplifier-agent {failure}; owned state retained at {self._root}. "
                 "Do not remove it while SDK resources remain in use."
             )
-            if primary is not None:
-                primary.add_note(message)
-                sys.stderr.write(message + "\n")
+            existing = primary or interrupted
+            if existing is not None:
+                existing.add_note(message)
+                with contextlib.suppress(OSError, ValueError):
+                    sys.stderr.write(message + "\n")
             else:
                 raise AgentError(message) from None
-        if interrupted and primary is None:
-            raise asyncio.CancelledError
+        if interrupted is not None and primary is None:
+            raise interrupted
+
+
+async def _discover(sdk: Any, env: dict[str, str]):
+    with _diagnostics(env):
+        return await sdk.list_providers(sdk.DiscoveryOptions(environment=env))
 
 
 async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSession:
@@ -272,23 +379,46 @@ async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSes
     with _diagnostics(env):
         sdk = _load_sdk()
         try:
-            records = await sdk.list_providers(sdk.DiscoveryOptions(environment=env))
+            discovery = asyncio.create_task(_discover(sdk, env))
+            discovery.add_done_callback(lambda task: None if task.cancelled() else task.exception())
+            try:
+                records = await asyncio.shield(discovery)
+            except asyncio.CancelledError as primary:
+                # Let discovery's own subprocess timeout reap a cached-gh probe.
+                # Do not cancel an SDK operation whose partial ownership is hidden.
+                deadline = asyncio.get_running_loop().time() + CLEANUP_SECONDS
+                while not discovery.done():
+                    remaining = max(0, deadline - asyncio.get_running_loop().time())
+                    if not remaining:
+                        primary.add_note("Public SDK discovery did not drain within the fixed 10s tail.")
+                        break
+                    try:
+                        await asyncio.wait({discovery}, timeout=remaining)
+                    except asyncio.CancelledError:
+                        pass
+                raise
         except Exception as exc:
             raise _safe_error(exc, startup=True) from None
     provider, model = _select(records, env)
-    root = tempfile.mkdtemp(prefix="tmux-fleet-agent-")
+    try:
+        root = tempfile.mkdtemp(prefix="tmux-fleet-agent-")
+    except OSError:
+        raise AgentUnavailable(
+            "Could not allocate owned temporary SDK state. Check the temporary directory is writable."
+        ) from None
     owner = AgentSession(sdk, env, root, provider)
     work = Path(root) / "work"
-    work.mkdir()
     try:
+        work.mkdir()
         with _diagnostics(env):
-            owner._agent = await sdk.create_agent(sdk.AgentOptions(
+            options = sdk.AgentOptions(
                 provider=provider, model=model, tools=[], skills=[], mcp_servers=[],
                 approvals="deny", additional_directories=[],
                 working_directory=str(cwd) if cwd is not None else work,
                 sessions_directory=Path(root) / "sessions", environment=env,
-            ))
-            owner._session = await owner._agent.create_session(sdk.SessionOptions(persistence="ephemeral"))
+            )
+            owner._startup = asyncio.create_task(owner._construct(options))
+            await asyncio.shield(owner._startup)
         return owner
     except asyncio.CancelledError:
         await owner.aclose()
