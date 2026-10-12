@@ -58,6 +58,7 @@ credential alternatives, endpoint requirements, and refusal remedies.
 ```
 tmux-fleet -h              # terse summary, to remember a verb or a flag name
 tmux-fleet --help          # the tool's skill, for an agent: guidance plus every verb
+tmux-fleet -V              # installed tool package version (--version is equivalent)
 tmux-fleet read -h         # the same two levels, narrowed to one verb
 tmux-fleet read --help     # every argument and its type, and what it returns
 tmux-fleet socket          # which socket am I reading, and on whose authority
@@ -75,8 +76,8 @@ tmux-fleet create <name> --confirmed                            # fenced create
 
 Every response is one JSON document on stdout. Failures are a JSON error
 envelope (`{"error": {"code", "message", "remedy"}}`) on stdout with a non-zero
-exit; diagnostics go to stderr. Help is the one thing on stdout that is not a
-response: plain text, exit 0. The write verbs refuse without `--confirmed`.
+exit; diagnostics go to stderr. Help and version are self-description, not
+responses: plain text, exit 0. The write verbs refuse without `--confirmed`.
 There is deliberately no verb that kills or renames a session.
 
 Smart verbs run one ephemeral turn with `tools=[]`, `skills=[]`,

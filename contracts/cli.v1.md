@@ -22,8 +22,10 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
    every verb too (`tmux-fleet VERB -h` is terse; `tmux-fleet VERB --help` is
    the complete listing: arguments and their types, what it returns, whether it
    is model-backed), and neither requires that verb's own arguments. Help is
-   not an error: it goes to stdout and exits 0, and it is the only thing on
-   stdout that is not JSON.
+   not an error: it goes to stdout and exits 0. `-V` and `--version` print the
+   installed CLI tool's package version and exit 0 before requiring a command,
+   without loading the SDK or provider configuration. Help and version are
+   self-description, not JSON results.
 
 2. **Deterministic verbs** — run correctly with no AI substrate configured at
    all: `socket`, `sessions`, `attention`, `read`, `send`, `create`, `doctor`,
@@ -48,7 +50,7 @@ so wrappers (the drumpack, scripts, other hosts) survive library evolution.
    on stdout, failure emits a JSON error envelope
    `{"error": {"code", "message", "remedy"}}` on stdout and exits non-zero.
    Progress/diagnostics go to stderr, never stdout. Self-description (rule 1)
-   is the one thing on stdout that is not a result.
+   (help and version) is the one thing on stdout that is not a result.
 
 6. **Sockets are explicit.** Every underlying tmux invocation names its socket;
    ambient `$TMUX` / `TMUX_TMPDIR` are ignored, and `socket` reports what was
@@ -86,6 +88,12 @@ it in a real drumbeat workspace · a worked example. DRAFT until all four.
 - Exit-code taxonomy beyond zero/non-zero.
 
 ## Changelog
+
+- **2026-10-12** — Rules 1/5 amended within the approved canonical conformance
+  promise: add `-V` / `--version` self-description. Evidence: canonical
+  `spec/invocation.md` at smart-tools commit `14b6957` requires both flags;
+  its kit reported 16 PASS + 1 FAIL for their absence on the migration candidate
+  and original base. No new verbs, package version change or DRAFT freeze.
 
 - **2026-10-12** — Rule 3 amended with owner approval and VISION §3: use the
   tagged public Python binding rather than removed engine internals. The binding

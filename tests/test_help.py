@@ -5,6 +5,9 @@ terse and `--help` is that verb's complete listing. None of them are aliases."""
 from __future__ import annotations
 
 import json
+from importlib.metadata import version
+from pathlib import Path
+import tomllib
 
 import pytest
 
@@ -31,6 +34,21 @@ def test_top_level_terse_help_exits_zero_on_stdout(capsys):
 def test_top_level_help_prints_the_skill_the_library_renders(capsys):
     """The CLI adds nothing: `--help` is the library's skill, byte for byte."""
     assert _help_output(capsys, ["--help"]) == skill()
+
+
+@pytest.mark.parametrize("flag", ["-V", "--version"])
+def test_version_is_installed_tool_package_not_sdk(capsys, flag):
+    output = _help_output(capsys, [flag])
+    package_version = version("tmux-fleet")
+    assert output == package_version + "\n"
+    project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    assert package_version == project["project"]["version"] == manifest().version
+
+
+def test_help_names_version_flags(capsys):
+    for flag in ("-h", "--help"):
+        output = _help_output(capsys, [flag])
+        assert "-V" in output and "--version" in output
 
 
 def test_the_skill_has_the_shape_of_an_agent_skill():

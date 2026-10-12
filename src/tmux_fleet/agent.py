@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import contextvars
 import io
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -131,13 +132,45 @@ def _select(records: list[Any], env: dict[str, str]) -> tuple[str, str]:
     return provider, model
 
 
+def _input_remedy(error: Any) -> str:
+    """Translate public error discriminators, never echo arbitrary values/paths."""
+    details = getattr(error, "details", None)
+    field = details.get("field") if isinstance(details, dict) else None
+    message = getattr(error, "message", "")
+    location = "AMPLIFIER_AGENT_CONFIG (otherwise ~/.amplifier-agent/config.json)"
+    if field == "config":
+        if message == "config: the configured file does not exist.":
+            return "Create the file selected by AMPLIFIER_AGENT_CONFIG or unset AMPLIFIER_AGENT_CONFIG."
+        return f"Correct {location}: use a readable, valid JSON object."
+    if isinstance(message, str) and message.endswith(": unregistered host setting."):
+        return (
+            f"Remove unregistered top-level settings from {location}. Allowed: provider, "
+            "model, reasoning_effort, sessions_directory, approvals, extra_request_params, "
+            "context_intelligence."
+        )
+    # Only fixed field names and fixed remedies leave this boundary. An SDK
+    # error's unknown field name can itself contain credentials.
+    fields = {
+        "reasoning_effort": "Set reasoning_effort / AMPLIFIER_AGENT_REASONING_EFFORT to none, minimal, low, medium, high, xhigh or max, or omit it; use an effort supported by the selected model.",
+        "provider": "Set TMUX_FLEET_PROVIDER / AMPLIFIER_AGENT_PROVIDER to a registered provider.",
+        "model": "Set AMPLIFIER_AGENT_MODEL to one nonempty matching model/deployment ID.",
+        "sessions_directory": "Set sessions_directory / AMPLIFIER_AGENT_SESSIONS_DIRECTORY to a nonempty writable path.",
+        "approvals": "Set host approvals / AMPLIFIER_AGENT_APPROVALS to allow or deny; this tool still explicitly denies approvals.",
+        "extra_request_params": "Correct extra_request_params in the SDK config to a JSON object of supported request settings.",
+        "context_intelligence": "Correct context_intelligence.destinations in the SDK config using the public SDK configuration schema.",
+    }
+    if isinstance(field, str) and field in fields:
+        return fields[field]
+    return f"Check {location} and supported AMPLIFIER_AGENT_* variables against the public SDK configuration schema."
+
+
 def _safe_error(error: Any, *, startup: bool = False) -> RuntimeError:
     # SDK messages/remedies/details and raw transport exceptions may contain
     # response bodies, endpoint credentials or authorization headers.
     code = getattr(error, "code", "")
     remedies = {
         "invalid_configuration": "Check the SDK host config and explicit provider/model settings.",
-        "invalid_input": "Check SDK host configuration and explicit provider/model/endpoint settings.",
+        "invalid_input": _input_remedy(error),
         "selector_rejected": "Set AMPLIFIER_AGENT_MODEL to a model/deployment this provider accepts.",
         "engine_unavailable": "Repair the binding/provider install and caller environment credentials.",
         "provider_failed": "Check caller credentials, provider availability and model compatibility.",
@@ -168,12 +201,12 @@ class _Diagnostics(io.TextIOBase):
         # One-shot diagnostics are emitted only at the lifecycle boundary.
         pass
 
-    def finish(self) -> None:
+    def finish(self, destination) -> None:
         text, self._buffer = self._buffer, ""
         for value in self._secrets:
             text = text.replace(value, "[redacted]")
-        sys.stderr.write(text)
-        sys.stderr.flush()
+        destination.write(text)
+        destination.flush()
 
 
 _stdout_sink = contextvars.ContextVar("_tmux_fleet_sdk_stdout", default=None)
@@ -216,12 +249,40 @@ class _StdoutRouter(io.TextIOBase):
     # lifecycle diagnostics use the text stream, not an interception bypass.
 
 
+class _SafeLogRecords:
+    """Sanitize before all handlers, including those holding an old stderr.
+
+    Raw SDK/provider response bodies are not useful safe diagnostics. Suppress
+    their message/exception payload entirely, not just known environment keys.
+    Caller tasks outside the SDK scope retain their original records.
+    """
+
+    def __init__(self, original):
+        self.original = original
+        self.users = 0
+
+    def __call__(self, *args, **kwargs):
+        record = self.original(*args, **kwargs)
+        if _stdout_sink.get() is not None:
+            record.msg = "amplifier-agent diagnostic omitted (raw SDK/provider logs may contain secrets)."
+            record.args = ()
+            record.exc_info = record.exc_text = record.stack_info = None
+        return record
+
+
 @contextlib.contextmanager
 def _diagnostics(env: dict[str, str]):
     sink = _Diagnostics(env)
     router = sys.stdout if isinstance(sys.stdout, _StdoutRouter) else _StdoutRouter(sys.stdout)
     sys.stdout = router
     router.users += 1
+    stderr = sys.stderr if isinstance(sys.stderr, _StdoutRouter) else _StdoutRouter(sys.stderr)
+    sys.stderr = stderr
+    stderr.users += 1
+    factory = logging.getLogRecordFactory()
+    factory = factory if isinstance(factory, _SafeLogRecords) else _SafeLogRecords(factory)
+    logging.setLogRecordFactory(factory)
+    factory.users += 1
     token = _stdout_sink.set(sink)
     try:
         yield
@@ -230,9 +291,15 @@ def _diagnostics(env: dict[str, str]):
         router.users -= 1
         if not router.users and sys.stdout is router:
             sys.stdout = router.original
+        stderr.users -= 1
+        if not stderr.users and sys.stderr is stderr:
+            sys.stderr = stderr.original
+        factory.users -= 1
+        if not factory.users and logging.getLogRecordFactory() is factory:
+            logging.setLogRecordFactory(factory.original)
         # Diagnostics failure is secondary, never a replacement exception.
         with contextlib.suppress(OSError, ValueError):
-            sink.finish()
+            sink.finish(stderr.original)
 
 
 class AgentSession:

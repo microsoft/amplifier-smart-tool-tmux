@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -45,7 +46,7 @@ def isolated_env(monkeypatch, tmp_path, request):
             # The deliberate invalid-config test is pre-runtime construction.
             # Its asyncio.run already settled; only an empty work directory
             # exists. Never sweep or rmtree potentially live SDK sessions.
-            assert request.node.name == "test_real_refusals_and_config_validation"
+            assert request.node.originalname == "test_real_refusals_and_config_validation"
             assert list(root.iterdir()) == [root / "work"]
             (root / "work").rmdir()
             root.rmdir()
@@ -191,7 +192,14 @@ def test_real_explicit_non_anthropic_pair_and_file_override(monkeypatch, tmp_pat
     run(scenario())
 
 
-def test_real_refusals_and_config_validation(monkeypatch, tmp_path):
+@pytest.mark.parametrize("config_text,match", [
+    (None, "Create the file selected by AMPLIFIER_AGENT_CONFIG"),
+    ("{broken fixture-api-key", "valid JSON object"),
+    ("[]", "valid JSON object"),
+    ('{"fixture-api-key": true}', "Remove unregistered top-level settings"),
+    ('{"reasoning_effort": "fixture-api-key"}', "AMPLIFIER_AGENT_REASONING_EFFORT"),
+])
+def test_real_refusals_and_config_validation(monkeypatch, tmp_path, config_text, match):
     async def scenario():
         monkeypatch.setenv("AMPLIFIER_AGENT_PROVIDER", "openai")
         with pytest.raises(agent.AgentUnavailable, match="conflicts"):
@@ -206,10 +214,13 @@ def test_real_refusals_and_config_validation(monkeypatch, tmp_path):
         monkeypatch.setenv("TMUX_FLEET_PROVIDER", "anthropic")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "fixture-api-key")
         config = tmp_path / "invalid.json"
-        config.write_text('{"unknown_setting": true}')
+        if config_text is not None:
+            config.write_text(config_text)
         monkeypatch.setenv("AMPLIFIER_AGENT_CONFIG", str(config))
-        with pytest.raises(agent.AgentUnavailable):
+        with pytest.raises(agent.AgentUnavailable, match=match) as exc:
             await agent.prepare_turn()
+        assert "fixture-api-key" not in str(exc.value)
+        assert str(config) not in str(exc.value)
     run(scenario())
 
 
@@ -228,3 +239,46 @@ def test_real_cli_one_json_and_no_secret(monkeypatch, capsys):
     output = capsys.readouterr()
     assert json.loads(output.out)["model_backed"] is True
     assert "fixture-api-key" not in output.out + output.err
+
+
+@pytest.mark.parametrize("failure,delay", [(401, False), (503, False), (None, True)])
+def test_standalone_cli_error_secrets_and_delayed_shutdown(monkeypatch, tmp_path, failure, delay):
+    """Real CLI process: no pytest logging handler can hide stderr leaks."""
+    async def scenario():
+        fixture = ProviderFixture(failure=failure, delay=delay)
+        async with fixture.running() as url, fleet("fixture-session") as (_, kw):
+            environment = dict(os.environ, ANTHROPIC_BASE_URL=url, TMPDIR=str(tmp_path))
+            start = asyncio.get_running_loop().time()
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "tmux_fleet.cli", "triage",
+                "--socket-dir", kw["socket_dir"], "--socket-name", kw["socket_name"],
+                "--timeout-ms", "1500" if delay else "10000",
+                env=environment, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            # This is a test watchdog, not a product kill/exit workaround.
+            # On failure release only our scripted provider so the child can drain.
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), 20)
+            except TimeoutError:
+                fixture.release.set()
+                await asyncio.wait_for(proc.communicate(), 20)
+                pytest.fail("standalone CLI exceeded watchdog; scripted provider release required")
+            elapsed = asyncio.get_running_loop().time() - start
+            assert proc.returncode == 1, stderr.decode()
+            result = json.loads(stdout)
+            assert result["error"]["code"] == "agent_error"
+            assert fixture.started.is_set() and fixture.requests
+            assert b"fixture-api-key" not in stdout + stderr
+            assert b"fixture-response-secret" not in stdout + stderr
+            if delay:
+                assert "budget" in result["error"]["message"]
+                assert elapsed < 13
+            else:
+                assert "diagnostic omitted" in stderr.decode()
+            assert not list(tmp_path.glob("tmux-fleet-agent-*"))
+            for _ in range(20):
+                if not fixture.tasks:
+                    break
+                await asyncio.sleep(0.01)
+            assert not fixture.tasks and not fixture.connections
+    run(scenario())

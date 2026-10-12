@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import json
+import logging
 import os
 from pathlib import Path
 import subprocess
@@ -297,6 +298,52 @@ def test_split_writes_and_flushes_never_leak(capsys):
     assert output.out == "" and output.err == "[redacted]"
 
 
+def test_stderr_split_writes_never_leak(capsys):
+    with agent._diagnostics({"TOKEN": "synthetic-secret"}):
+        sys.stderr.write("synthetic-")
+        sys.stderr.flush()
+        sys.stderr.write("secret\n")
+    output = capsys.readouterr()
+    assert output.out == "" and output.err == "[redacted]\n"
+
+
+def test_logging_prebound_handlers_and_exceptions_are_safe(capsys):
+    logger = logging.getLogger("fixture.provider")
+    handler = logging.StreamHandler(sys.stderr)  # Deliberately before scope entry.
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(handler)
+    original = logging.getLogRecordFactory()
+    try:
+        with agent._diagnostics({}):  # Unknown response secret, not an env key.
+            try:
+                raise RuntimeError("fixture-response-secret")
+            except RuntimeError:
+                logger.warning("raw response %s", "fixture-response-secret",
+                               exc_info=True, stack_info=True)
+        logger.warning("caller diagnostic unchanged")
+    finally:
+        logger.removeHandler(handler)
+    assert logging.getLogRecordFactory() is original
+    output = capsys.readouterr()
+    assert not output.out and "fixture-response-secret" not in output.err
+    assert "diagnostic omitted" in output.err
+    assert "caller diagnostic unchanged" in output.err
+
+
+@pytest.mark.parametrize("field,message,expected", [
+    ("config", "config: the configured file does not exist.", "Create the file"),
+    ("config", "config: cannot read valid JSON settings.", "valid JSON object"),
+    ("synthetic-secret", "synthetic-secret: unregistered host setting.", "Remove unregistered"),
+    ("reasoning_effort", "reasoning_effort: 'synthetic-secret' is invalid.", "AMPLIFIER_AGENT_REASONING_EFFORT"),
+    ("synthetic-secret", "synthetic-secret", "public SDK configuration schema"),
+])
+def test_safe_config_remedies(field, message, expected):
+    error = NS(code="invalid_input", message=message, remedy="synthetic-secret",
+               details={"field": field, "raw": "synthetic-secret"})
+    text = str(agent._safe_error(error, startup=True))
+    assert expected in text and "synthetic-secret" not in text
+
+
 def test_writelines_routes_to_safe_diagnostics(capsys):
     with agent._diagnostics({"TOKEN": "synthetic-secret"}):
         sys.stdout.writelines(["synthetic-", "secret\n"])
@@ -419,6 +466,38 @@ def test_overlapping_sdk_diagnostic_scopes(capsys):
     assert "A [redacted]" in output.err and "B [redacted]" in output.err
 
 
+def test_overlapping_diagnostics_restore_stderr_and_logging(capsys):
+    original_stream = sys.stderr
+    original_factory = logging.getLogRecordFactory()
+    async def scenario():
+        first, second = asyncio.Event(), asyncio.Event()
+        async def a():
+            with agent._diagnostics({"TOKEN": "synthetic-secret"}):
+                first.set()
+                await second.wait()
+                sys.stderr.write("A synthetic-secret\n")
+                logging.warning("A fixture-response-secret")
+        async def b():
+            await first.wait()
+            with agent._diagnostics({"TOKEN": "synthetic-secret"}):
+                second.set()
+                await asyncio.sleep(0)
+                sys.stderr.write("B synthetic-secret\n")
+                logging.warning("B fixture-response-secret")
+        async def caller():
+            await first.wait()
+            sys.stderr.write("caller stderr\n")
+            logging.warning("caller log")
+        await asyncio.gather(a(), b(), caller())
+    run(scenario())
+    assert sys.stderr is original_stream
+    assert logging.getLogRecordFactory() is original_factory
+    output = capsys.readouterr()
+    assert "synthetic-secret" not in output.err
+    assert "A [redacted]" in output.err and "B [redacted]" in output.err
+    assert "caller stderr" in output.err
+
+
 def test_cli_refusal_envelope(monkeypatch, capsys):
     async def refused(*a, **kw):
         raise agent.AgentUnavailable(agent._no_provider_hint())
@@ -441,11 +520,19 @@ def test_deterministic_paths_block_sdk_and_preserve_environment():
         builtins.__import__ = blocked
         before = dict(os.environ)
         from tmux_fleet import cli
-        cli.main(["--help"])
+        for flag in ("--help", "-V", "--version"):
+            try:
+                cli.main([flag])
+            except SystemExit as exc:
+                assert exc.code == 0
         cli.main(["doctor", "--socket-dir", {NO_SOCKET!r}])
         cli.main(["sessions", "--socket-dir", {NO_SOCKET!r}])
         assert before == dict(os.environ)
         assert not any("amplifier_agent" in m for m in sys.modules)
     """)
-    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("AMPLIFIER_AGENT_", "ANTHROPIC_", "OPENAI_", "AZURE_", "GOOGLE_", "GEMINI_"))
+           and not any(term in k for term in ("KEY", "TOKEN", "SECRET", "PASSWORD"))}
+    env["AMPLIFIER_AGENT_CONFIG"] = "/tmp/tmux-fleet-missing-sdk-config.json"
+    proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
     assert proc.returncode == 0, proc.stderr

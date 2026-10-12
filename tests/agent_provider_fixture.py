@@ -87,7 +87,7 @@ class ProviderFixture:
             text = self.replies[min(ordinal - 1, len(self.replies) - 1)]
             if self.failure:
                 await self.json_response(writer, {
-                    "error": {"type": "api_error", "message": "fixture-api-key synthetic failure"}
+                    "error": {"type": "api_error", "message": "fixture-api-key fixture-response-secret synthetic failure"}
                 }, self.failure)
                 return
             if path == "/v1/chat/completions":

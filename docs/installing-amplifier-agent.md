@@ -124,6 +124,11 @@ only the coroutine awaiting `run()` does not stop the independent SDK turn.
 If shutdown cannot finish within the tail, report failure honestly and retain
 state still in use; never delete live state or hide the primary failure behind a
 cleanup error. SDK diagnostics go to stderr so CLI stdout stays one JSON result.
+Within SDK lifecycle tasks, text stdout/stderr diagnostics redact caller-environment
+secret values (including split writes). Raw logging messages and exception payloads
+are omitted before handlers run, including handlers bound to an earlier stderr:
+provider response bodies can contain secrets not present in the environment.
+Unrelated caller tasks keep their own streams and logging records.
 
 The cleanup tail bounds the adapter's wait, not a force-stop of Python or an
 arbitrary SDK/provider that ignores public close. Supported delayed-provider
@@ -148,7 +153,7 @@ is claimed.
 | Public `amplifier_agent` or selected base provider package is not importable | Reinstall the tool with its regular tagged dependency; source checkouts use `uv sync --locked`. Do not patch private engine caches. |
 | Unknown provider, conflicting pins, or no eligible environment evidence | Set a supported provider with its required environment credentials/endpoint; align or unset conflicting pins. |
 | Selected provider lacks credentials or a matching model | Export the variables above and `AMPLIFIER_AGENT_MODEL` for non-Anthropic providers. Pinning alone supplies neither. |
-| SDK config is invalid or an explicitly selected file is missing | Fix the file named by the SDK (`AMPLIFIER_AGENT_CONFIG`, otherwise `~/.amplifier-agent/config.json`); do not bypass its validation. |
+| SDK config is invalid or an explicitly selected file is missing | Remedies name the config selector (`AMPLIFIER_AGENT_CONFIG`, otherwise `~/.amplifier-agent/config.json`), not its potentially sensitive path. Create a missing explicit file or unset the selector; correct malformed JSON to a readable object; remove unregistered settings or correct the safely named registered field. Raw SDK values/details are never echoed; validation is not bypassed. |
 | Provider/turn/output/shutdown fails | Follow the safe error remedy; only successful, error-free, nonempty SDK text can reach JSON-object parsing. Non-success terminal text is not a result; retained in-use state is not successful cleanup. |
 
 ## Verification lesson for maintainers
@@ -165,6 +170,7 @@ automated gate. Unit mocks alone do not prove the installed release works.
    traffic. Assert installed v0.22.0, actual options and no advertised tools.
 2. Exercise triage/interpret on `tmux_kit.isolated_tmux_server()`, including
    HTTP 401/503, partial EOF, delayed/hung providers, external cancellation,
+   standalone CLI HTTP-error secret sentinels and actual CLI timeout/exit,
    empty/malformed/non-object JSON and non-success terminal text. Check cleanup's
    total bound, remaining tasks/state, and preservation of caller paths. Every
    raw tmux command, including teardown, must name an owned `-L` or `-S` socket.

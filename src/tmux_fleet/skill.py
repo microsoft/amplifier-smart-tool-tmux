@@ -65,6 +65,8 @@ def skill() -> str:
         "",
         skill_body(),
         "",
+        "Self-description: `tmux-fleet -V` / `tmux-fleet --version` prints the installed tool version.",
+        "",
         "## Capabilities",
         "",
     ]
