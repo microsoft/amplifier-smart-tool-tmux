@@ -489,13 +489,17 @@ async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSes
                 sessions_directory=Path(root) / "sessions", environment=env,
             )
             owner._startup = asyncio.create_task(owner._construct(options))
-            await asyncio.shield(owner._startup)
+            # Wait without transporting startup control flow across an await:
+            # inline GeneratorExit delegation would close this coroutine.
+            # Caller cancellation still leaves the owned startup task alive.
+            await asyncio.wait({owner._startup})
+            owner._startup.result()
         return owner
     except Exception as exc:
         await owner.aclose()
         raise _safe_error(exc, startup=True) from None
     except BaseException:
-        # Startup tasks can return non-Exception control flow through shield.
+        # Retrieve startup control flow locally so cleanup can await safely.
         # Close returned handles, retaining uncertain state and the original error.
         await owner.aclose()
         raise

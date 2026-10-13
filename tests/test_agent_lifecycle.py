@@ -188,6 +188,49 @@ def test_startup_task_control_flow_closes_returned_agent(monkeypatch, kind, clos
     assert "fixture-response-secret" not in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("shape", ["prepare_turn", "triage", "interpret"])
+@pytest.mark.parametrize("kind", [GeneratorExit, StartupControl])
+@pytest.mark.parametrize("close_fault", [False, True])
+def test_inline_startup_control_flow_closes_before_escape(monkeypatch, shape, kind, close_fault, capsys):
+    """Exercise production inline awaits, not a task wrapping prepare_turn."""
+    primary = kind("fixture-response-secret startup fault")
+
+    async def scenario():
+        async with handles(
+            monkeypatch, startup_error=primary,
+            failures=("agent",) if close_fault else (),
+        ) as seen:
+            with pytest.raises(BaseException) as caught:
+                if shape == "prepare_turn":
+                    await agent.prepare_turn()
+                elif shape == "triage":
+                    await smart.triage()
+                else:
+                    await smart.interpret("lifecycle")
+            owner, = seen.owners
+            native, = seen.agents
+            session, = seen.sessions
+            assert caught.value is primary
+            assert any("owned state retained" in note for note in primary.__notes__)
+            assert owner._startup.done() and owner._startup.exception() is primary
+            assert owner._close is not None and owner._close.done()
+            assert seen.calls == [("agent", native)], seen.calls
+            assert seen.closed == [("agent", native)]
+            assert owner._agent is native and owner._session is None
+            assert owner._uncertain and Path(owner._root).is_dir()
+            assert not owner._submitted and owner._run is None
+            # Only the fixture owns this unreturned Session; Agent.close does
+            # not certify its drain. Handles.finish closes it before deletion.
+            assert isinstance(session, sdk.Session)
+
+    async def bounded():
+        # Bound the scenario task, leaving every production await inline.
+        await asyncio.wait_for(asyncio.create_task(scenario()), 5)
+
+    run(bounded())
+    assert "fixture-response-secret" not in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("failures", [(), ("session",), ("agent",), ("session", "agent")])
 def test_real_close_matrix_retains_failed_state(monkeypatch, failures, capsys):
     async def scenario():
