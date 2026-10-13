@@ -77,6 +77,25 @@ piping CLI output.
 uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux
 ```
 
+For **uv-managed installs**, upgrade within the saved source and version constraints:
+
+```
+uv tool upgrade tmux-fleet
+```
+
+A pinned Git revision stays pinned; upgrade does not switch it to main/latest.
+To deliberately change the source/ref, reinstall with an explicit Git URL/ref.
+For example, to select the `main` branch:
+
+```
+uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux@main
+```
+
+Replace `@main` with the desired branch, tag, or commit. See the
+[uv tools guide](https://docs.astral.sh/uv/guides/tools/#upgrading-tools) for
+upgrade constraints and reinstall guidance. These are installer commands, not
+`tmux-fleet` verbs.
+
 Python >=3.13 and `tmux` on PATH are required; every verb is a tmux client.
 The regular dependency is
 `amplifier-agent @ git+https://github.com/microsoft/amplifier-agent@v0.22.0#subdirectory=packages/python`.

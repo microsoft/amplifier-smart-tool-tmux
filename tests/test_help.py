@@ -5,14 +5,20 @@ terse and `--help` is that verb's complete listing. None of them are aliases."""
 from __future__ import annotations
 
 import json
-from importlib.metadata import version
+from dataclasses import replace
+from email.message import Message
+from importlib import import_module
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
+import subprocess
+import sys
+import textwrap
 import tomllib
 
 import pytest
 
 from tmux_fleet import cli
-from tmux_fleet.manifest import manifest
+from tmux_fleet.manifest import ManifestError, manifest
 from tmux_fleet.skill import skill, skill_directory, skill_resources
 
 _VERB_NAMES = [v["name"] for v in cli.VERBS]
@@ -67,6 +73,106 @@ def test_the_skill_has_the_shape_of_an_agent_skill():
     assert "<skill_resources>\n" in rendered
     for path in skill_resources():
         assert f"  <file>{path}</file>\n" in rendered
+
+
+def test_the_skill_header_carries_the_manifest_version():
+    """David's PR18 header sits immediately after Repository, not in the body."""
+    lines = skill().splitlines()
+    repo = next(i for i, line in enumerate(lines) if line.startswith("Repository: "))
+    assert lines[repo + 1] == f"Version: {manifest().version}"
+    assert lines[repo + 2].startswith("Relative paths")
+    assert lines.count(f"Version: {manifest().version}") == 1
+    assert manifest().version == version("tmux-fleet")
+
+
+def test_the_skill_version_comes_from_the_manifest_not_installed_metadata(monkeypatch):
+    skill_module = import_module("tmux_fleet.skill")
+    synthetic = replace(manifest(), version="9.8.7")
+    monkeypatch.setattr(skill_module, "manifest", lambda: synthetic)
+    assert skill_module.version() == "9.8.7"
+    assert "\nVersion: 9.8.7\n" in skill()
+    assert version("tmux-fleet") != synthetic.version
+
+
+@pytest.mark.parametrize("metadata_missing", [False, True])
+def test_the_skill_keeps_version_without_repository_metadata(monkeypatch, metadata_missing):
+    skill_module = import_module("tmux_fleet.skill")
+
+    def no_repository(name):
+        if metadata_missing:
+            raise PackageNotFoundError(name)
+        return Message()
+
+    monkeypatch.setattr(skill_module, "metadata", no_repository)
+    lines = skill().splitlines()
+    assert not any(line.startswith("Repository: ") for line in lines)
+    assert lines[2] == f"Version: {manifest().version}"
+    assert lines[3].startswith("Relative paths")
+
+
+def test_unavailable_manifest_omits_version_and_keeps_loud_body(capsys, monkeypatch):
+    manifest_module = import_module("tmux_fleet.manifest")
+
+    def unavailable():
+        raise ManifestError("synthetic missing manifest")
+
+    monkeypatch.setattr(manifest_module, "_read_manifest_text", unavailable)
+    rendered = _help_output(capsys, ["--help"])
+    assert rendered == skill()
+    assert not any(line.startswith("Version: ") for line in rendered.splitlines())
+    assert "(manifest unavailable: synthetic missing manifest)" in rendered
+    assert "\n## Capabilities\n" in rendered
+    assert "prints the installed tool version." in rendered
+
+
+def test_rendered_help_qualifies_uv_upgrade_and_explicit_ref_reinstall(capsys):
+    """Pins shipped guidance, not an execution proof of uv's upgrade semantics."""
+    rendered = _help_output(capsys, ["--help"])
+    assert "For **uv-managed installs**" in rendered
+    assert "uv tool upgrade tmux-fleet" in rendered
+    assert "saved source and version constraints" in rendered
+    assert "A pinned Git revision stays pinned; upgrade does not switch it to main/latest." in rendered
+    assert "reinstall with an explicit Git URL/ref" in rendered
+    assert "uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux@main" in rendered
+    assert "Replace `@main` with the desired branch, tag, or commit." in rendered
+    assert "https://docs.astral.sh/uv/guides/tools/#upgrading-tools" in rendered
+    assert "upgrade" not in _VERB_NAMES
+
+
+def test_help_without_tmux_or_provider_never_imports_sdk_or_provider(tmp_path):
+    """Fresh process: no PATH tools/config, and SDK/provider imports fail loudly."""
+    code = textwrap.dedent("""
+        import builtins, contextlib, io, os, sys
+        blocked_prefixes = ("amplifier_agent", "amplifier_core", "anthropic", "openai", "google.genai")
+        real_import = builtins.__import__
+        def guarded_import(name, *args, **kwargs):
+            if name.startswith(blocked_prefixes):
+                raise AssertionError(f"SDK/provider imported: {name}")
+            return real_import(name, *args, **kwargs)
+        builtins.__import__ = guarded_import
+        before = dict(os.environ)
+        from tmux_fleet import cli, skill
+        from tmux_fleet.manifest import manifest
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            try:
+                cli.main(["--help"])
+            except SystemExit as exc:
+                assert exc.code == 0
+            else:
+                raise AssertionError("help did not exit")
+        assert output.getvalue() == skill()
+        assert f"Version: {manifest().version}\\n" in output.getvalue()
+        assert "uv tool upgrade tmux-fleet" in output.getvalue()
+        assert not any(name.startswith(blocked_prefixes) for name in sys.modules)
+        assert before == dict(os.environ)
+    """)
+    proc = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True,
+        env={"PATH": "", "HOME": str(tmp_path)}, timeout=20,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == proc.stderr == ""
 
 
 def test_every_skill_resource_ships_inside_the_package():
