@@ -1,0 +1,54 @@
+{
+  "key": "tmux",
+  "name": "tmux-fleet",
+  "kind": "tool",
+  "title": "tmux-fleet | Amplifier Smart Tools",
+  "accent": "#356e63",
+  "promise": "See the work across your terminals.",
+  "description": "Bring a fleet of tmux sessions into view. Find the sessions waiting for attention, read their output, and give your agent the context to help.",
+  "image": "site/assets/tmux.svg",
+  "alt": "tmux-fleet workflow diagram.",
+  "caption": "Workflow illustration.",
+  "width": 1200,
+  "height": 640,
+  "flow_title": "From scattered sessions to a clear next step.",
+  "flow_intro": "Bring a fleet of tmux sessions into view. Find the sessions waiting for attention, read their output, and give your agent the context to help.",
+  "steps": [
+    [
+      "Survey the fleet.",
+      "List sessions and see which ones are active, finished, or waiting for attention."
+    ],
+    [
+      "Read the context.",
+      "Inspect session output and exit status, or ask for an interpretation."
+    ],
+    [
+      "Act deliberately.",
+      "Send input or create a session with explicit confirmation for that invocation."
+    ]
+  ],
+  "detail_title": "Expertise your agent can put to work.",
+  "details": [
+    [
+      "Know where to look.",
+      "Use fleet-wide attention ordering to focus on the sessions that need you."
+    ],
+    [
+      "Understand the output.",
+      "Bring model-backed triage and interpretation to retained terminal context."
+    ],
+    [
+      "Keep control.",
+      "Read-only inspection and explicit write confirmation keep observation separate from action."
+    ]
+  ],
+  "prompt": "Use tmux-fleet to inspect my terminal sessions. Read tmux-fleet --help, list sessions, and summarize what needs attention. Ask before sending input or creating a session.",
+  "install": "uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux\ntmux-fleet --help",
+  "prerequisites": "Python 3.13+, uv, and tmux. Follow the setup guide for socket access and provider extras.",
+  "model_note": "Triage and interpretation use a configured model provider. Session inspection and explicit terminal operations run without one.",
+  "guide": "src/tmux_fleet/SMART_TOOL.md",
+  "related": [
+    "smart-tool-creator",
+    "possibly"
+  ]
+}

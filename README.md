@@ -1,5 +1,7 @@
 # tmux-fleet
 
+[Branded website source and publishing guide](site/README.md)
+
 A **smart tool** for tmux fleets: one library, one thin `tmux-fleet` CLI that
 tells you what is happening across every tmux session on a machine — which are
 parked at a prompt, which finished and how, which need a human — and, only
