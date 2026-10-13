@@ -44,9 +44,11 @@
   ],
   "prompt": "Use tmux-fleet to inspect my terminal sessions. Read tmux-fleet --help, list sessions, and summarize what needs attention. Ask before sending input or creating a session.",
   "install": "uv tool install git+https://github.com/microsoft/amplifier-smart-tool-tmux\ntmux-fleet --help",
-  "prerequisites": "Python 3.13+, uv, and tmux. Follow the setup guide for socket access and provider extras.",
-  "model_note": "Triage and interpretation use a configured model provider. Session inspection and explicit terminal operations run without one.",
-  "guide": "src/tmux_fleet/SMART_TOOL.md",
+  "prerequisites": "Python 3.13+, uv, and tmux. The regular dependency includes amplifier-agent v0.22.0's tagged public Python binding; legacy provider extra names are compatibility aliases, not required installs.",
+  "model_note": "Triage and interpretation require caller-environment credentials. All non-Anthropic providers also require an explicit matching AMPLIFIER_AGENT_MODEL (a deployment ID for Azure). Deterministic inspection and explicit terminal operations run without a model provider.",
+  "capture_note": "Model-backed verbs still capture observations. Local cleanup is not a no-forwarding guarantee; review SDK configuration before sending sensitive pane output.",
+  "guide": "docs/installing-amplifier-agent.md",
+  "usage_guide": "src/tmux_fleet/SMART_TOOL.md",
   "related": [
     "smart-tool-creator",
     "possibly"
