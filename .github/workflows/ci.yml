@@ -27,7 +27,7 @@ jobs:
       - name: Tool and independent MCP App test suite
         run: |
           uv run --locked --extra dev --extra mcp playwright install --with-deps chromium
-          uv run --locked --extra dev --extra mcp pytest tests/ --ignore=tests/test_agent_sdk.py -q
+          uv run --locked --extra dev --extra mcp pytest tests/ --ignore=tests/test_agent_sdk.py --ignore=tests/test_agent_lifecycle.py -q
 
       # Steering enforcement: run the canonical conformance kit -- it belongs to
       # the spec repo and is never vendored here -- against the tool AS IT SHIPS.
@@ -73,11 +73,11 @@ jobs:
       - name: Install isolated SDK gate prerequisites
         run: apt-get update && apt-get install -y tmux git
       - name: Real installed v0.22 public SDK gate
-        run: uv run --locked --extra dev --extra mcp pytest tests/test_agent_sdk.py -q
+        run: uv run --locked --extra dev --extra mcp pytest tests/test_agent_sdk.py tests/test_agent_lifecycle.py -q
       - name: Fresh wheel resolution and real SDK gate
         run: |
           uv build --wheel
           uv venv "$RUNNER_TEMP/wheel-env"
           uv pip install --python "$RUNNER_TEMP/wheel-env/bin/python" dist/*.whl pytest
           "$RUNNER_TEMP/wheel-env/bin/python" tests/check_package.py
-          "$RUNNER_TEMP/wheel-env/bin/python" -m pytest tests/test_agent_sdk.py -q
+          "$RUNNER_TEMP/wheel-env/bin/python" -m pytest tests/test_agent_sdk.py tests/test_agent_lifecycle.py -q
