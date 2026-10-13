@@ -491,9 +491,11 @@ async def prepare_turn(*, cwd: str | os.PathLike[str] | None = None) -> AgentSes
             owner._startup = asyncio.create_task(owner._construct(options))
             await asyncio.shield(owner._startup)
         return owner
-    except asyncio.CancelledError:
-        await owner.aclose()
-        raise
     except Exception as exc:
         await owner.aclose()
         raise _safe_error(exc, startup=True) from None
+    except BaseException:
+        # Startup tasks can return non-Exception control flow through shield.
+        # Close returned handles, retaining uncertain state and the original error.
+        await owner.aclose()
+        raise
