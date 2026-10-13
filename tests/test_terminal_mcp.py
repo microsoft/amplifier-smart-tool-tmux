@@ -267,6 +267,8 @@ def test_browser_keyboard_queue_clipboard_and_unknown_delivery(tmp_path):
 
             text = "continuous_typing_is_not_blocked_by_slow_tool_replies"
             reads_before_typing = state_reads
+            await expect(frame.locator("#type")).to_be_enabled()
+            await expect(textarea).to_be_focused()
             typing = asyncio.create_task(page.keyboard.type(text, delay=5))
             await page.wait_for_timeout(60)
             assert inputs and not typing.done()
