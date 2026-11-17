@@ -1,6 +1,9 @@
-# tmux-fleet
+<h1 align="center">tmux-fleet</h1>
 
-[Branded website source and publishing guide](site/README.md)
+<p align="center">
+  <a href="https://microsoft.github.io/amplifier-smart-tool-tmux/">Website</a> |
+  <a href="https://microsoft.github.io/amplifier-smart-tools/">Smart Tools</a>
+</p>
 
 A **smart tool** for tmux fleets: one library, one thin `tmux-fleet` CLI that
 tells you what is happening across every tmux session on a machine — which are
